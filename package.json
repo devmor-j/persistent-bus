@@ -1,0 +1,64 @@
+{
+  "name": "persistent-bus",
+  "version": "0.0.0",
+  "scripts": {
+    "build": "tsdown",
+    "prisma:generate": "npx prisma generate",
+    "prisma:studio": "npx prisma studio",
+    "prisma:migrate": "npx prisma migrate dev",
+    "prisma:push": "npx prisma db push",
+    "prisma:reset": "npx prisma migrate reset",
+    "prettier": "npx prettier -wu './src/**/*.{js,cjs,mjs,ts,cts,mts,json,yml,md}'"
+  },
+  "dependencies": {
+    "@prisma/adapter-pg": "~7.8.0",
+    "@prisma/client": "~7.8.0",
+    "pg": "~8.21.0",
+    "prisma": "~7.8.0",
+    "redis": "~6.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "~25.9.3",
+    "@types/pg": "~8.20.0",
+    "prettier": "~3.8.4",
+    "prettier-plugin-organize-imports": "~4.3.0",
+    "tsdown": "~0.22.3",
+    "typescript": "~6.0.3"
+  },
+  "allowScripts": {
+    "prisma@7.8.0": true,
+    "@prisma/engines@7.8.0": true
+  },
+  "type": "module",
+  "main": "./dist/main.cjs",
+  "module": "./dist/main.mjs",
+  "types": "./dist/main.d.mts",
+  "exports": {
+    ".": {
+      "require": "./dist/main.cjs",
+      "import": "./dist/main.mjs",
+      "types": "./dist/main.d.mts"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "keywords": [
+    "nodejs",
+    "persistent-bus"
+  ],
+  "description": "",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/devmor-j/persistent-bus.git"
+  },
+  "homepage": "https://github.com/devmor-j/persistent-bus#readme",
+  "bugs": {
+    "url": "https://github.com/devmor-j/persistent-bus/issues"
+  },
+  "engines": {
+    "node": ">=18.12"
+  },
+  "author": "Morteza Jamshidi",
+  "license": "MIT"
+}
