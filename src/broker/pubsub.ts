@@ -11,7 +11,12 @@ export async function createPubsub() {
     url: REDIS_URL,
   }).connect();
 
+  let isClosing = false;
+
   const tryClose = async () => {
+    if (isClosing) return;
+    isClosing = true;
+
     await publisher.close().catch(() => void {});
     await subscriber.close().catch(() => void {});
   };
@@ -22,5 +27,6 @@ export async function createPubsub() {
   return {
     publish: publisher.publish.bind(publisher),
     subscribe: subscriber.subscribe.bind(subscriber),
+    tryClose,
   };
 }

@@ -13,24 +13,7 @@ export async function createPersistentBus<
   PublisherEvents extends Record<string, any>,
   SubscriberEvents extends Record<string, any>,
 >(publisherName: string) {
-  const publisherEvents: (keyof PublisherEvents)[] = [];
-  const subscriberEvents: (keyof SubscriberEvents)[] = [];
-
   const pubsub = await createPubsub();
-
-  type PublishType = {
-    [K in keyof PublisherEvents]: (
-      payload: PublisherEvents[K],
-    ) => Promise<void>;
-  };
-
-  type SubscribeType = {
-    [K in keyof SubscriberEvents & string]: (
-      handler: (
-        envelope: EventEnvelope<K, SubscriberEvents[K]>,
-      ) => Promise<void> | void,
-    ) => void;
-  };
 
   const createOutbox = async (event: string, payload: any) => {
     const eventId = randomUUID();
@@ -134,12 +117,12 @@ export async function createPersistentBus<
 
       if (isDead) {
         await markDeadOutbox(outboxEvent.eventId, "recall:dead");
-        logger.trace(`[${outboxEvent.eventName}]:dead`);
+        logger.info(`[${outboxEvent.eventName}]:dead`);
       } else {
         await incrementRetryOutbox(outboxEvent.eventId);
 
         try {
-          logger.trace(`[${outboxEvent.eventName}]:recalling`);
+          logger.info(`[${outboxEvent.eventName}]:recalling`);
           await pubsub.publish(outboxEvent.eventName, outboxEvent.data);
         } catch {
           await decrementRetryOutbox(outboxEvent.eventId);
@@ -150,90 +133,86 @@ export async function createPersistentBus<
     }
   };
 
-  const createPublisher = <N extends string, P>(event: N, _payload: P) => {
-    return async (payload: P) => {
-      const { eventId, data } = await createOutbox(event, payload);
+  const createPublisher = async <N extends string, P>(event: N, payload: P) => {
+    const { eventId, data } = await createOutbox(event, payload);
 
-      const retryIfPending = async () => {
-        const pendingEvent = await findPendingOutbox(eventId);
-        if (!pendingEvent) return;
+    const retryIfPending = async () => {
+      const pendingEvent = await findPendingOutbox(eventId);
+      if (!pendingEvent) return;
 
-        if (pendingEvent.retries > DEAD_RETRY) {
-          await markDeadOutbox(eventId, "retry:dead");
-          logger.trace(`[${event}]:dead`);
+      if (pendingEvent.retries > DEAD_RETRY) {
+        await markDeadOutbox(eventId, "retry:dead");
+        logger.info(`[${event}]:dead`);
+      } else {
+        await incrementRetryOutbox(eventId);
+
+        try {
+          await pubsub.publish(event, data);
+          logger.info(`[${event}]:retried`);
+
+          const retryDelay = calculateRetryDelay(pendingEvent.retries);
+          setTimeout(retryIfPending, retryDelay).unref();
+        } catch {
+          await decrementRetryOutbox(eventId);
+        }
+      }
+    };
+
+    setTimeout(retryIfPending, PENDING_DELAY);
+    await pubsub.publish(event, data);
+    logger.info(`[${event}]:dispatched`);
+  };
+
+  const createSubscriber = <N extends string, P>(
+    event: N,
+    handler: (envelope: EventEnvelope<N, P>) => void | Promise<void>,
+  ) => {
+    pubsub.subscribe(event, async (data: string) => {
+      const envelope = JSON.parse(data) as EventEnvelope<N, P>;
+      const { eventId } = envelope;
+
+      await markProcessingOutbox(eventId);
+
+      try {
+        await handler(envelope);
+        await markCompletedOutbox(eventId);
+        logger.info(`[${event}]:completed`);
+      } catch (err) {
+        const outboxEvent = await findOutbox(eventId);
+        if (!outboxEvent) return;
+
+        const errorMessage = errorToString(err);
+        const isDead = outboxEvent.retries > DEAD_RETRY;
+
+        if (isDead) {
+          await markDeadOutbox(eventId, errorMessage);
+          logger.info(`[${event}]:dead`);
         } else {
           await incrementRetryOutbox(eventId);
 
-          try {
-            await pubsub.publish(event, data);
-            logger.trace(`[${event}]:retried`);
-
-            const retryDelay = calculateRetryDelay(pendingEvent.retries);
-            setTimeout(retryIfPending, retryDelay).unref();
-          } catch {
-            await decrementRetryOutbox(eventId);
-          }
+          const retryDelay = calculateRetryDelay(outboxEvent.retries);
+          setTimeout(() => pubsub.publish(event, data), retryDelay).unref();
         }
-      };
-
-      setTimeout(retryIfPending, PENDING_DELAY);
-      await pubsub.publish(event, data);
-      logger.trace(`[${event}]:dispatched`);
-    };
+      }
+    });
   };
 
-  const createSubscriber = <N extends string, P>(event: N, _payload: P) => {
-    return (
-      handler: (envelope: EventEnvelope<N, P>) => void | Promise<void>,
-    ) => {
-      pubsub.subscribe(event, async (data: string) => {
-        const envelope = JSON.parse(data) as EventEnvelope<N, P>;
-        const { eventId } = envelope;
+  const publish = <K extends Extract<keyof PublisherEvents, string>>(
+    eventName: K,
+    payload: PublisherEvents[K],
+  ): Promise<void> => createPublisher(eventName, payload);
 
-        await markProcessingOutbox(eventId);
-
-        try {
-          await handler(envelope);
-          await markCompletedOutbox(eventId);
-          logger.trace(`[${event}]:completed`);
-        } catch (err) {
-          const outboxEvent = await findOutbox(eventId);
-          if (!outboxEvent) return;
-
-          const errorMessage = errorToString(err);
-          const isDead = outboxEvent.retries > DEAD_RETRY;
-
-          if (isDead) {
-            await markDeadOutbox(eventId, errorMessage);
-            logger.trace(`[${event}]:dead`);
-          } else {
-            await incrementRetryOutbox(eventId);
-
-            const retryDelay = calculateRetryDelay(outboxEvent.retries);
-            setTimeout(() => pubsub.publish(event, data), retryDelay).unref();
-          }
-        }
-      });
-    };
-  };
-
-  const publish = Object.fromEntries(
-    publisherEvents.map((event) => [
-      event as string,
-      createPublisher(event as string, {} as any),
-    ]),
-  ) as unknown as PublishType;
-
-  const subscribe = Object.fromEntries(
-    subscriberEvents.map((event) => [
-      event as string,
-      createSubscriber(event as string, {} as any),
-    ]),
-  ) as unknown as SubscribeType;
+  const subscribe = <K extends Extract<keyof SubscriberEvents, string>>(
+    eventName: K,
+    handler: (
+      envelope: EventEnvelope<K, SubscriberEvents[K]>,
+    ) => void | Promise<void>,
+  ) => createSubscriber(eventName, handler);
 
   return {
     publish,
     subscribe,
     recallOutbox,
+    tryClose: pubsub.tryClose,
   };
 }

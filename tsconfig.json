@@ -1,9 +1,9 @@
 {
-  "include": ["./src"],
+  "include": ["./src", "./test"],
   "compilerOptions": {
-    "target": "es2022",
-    "lib": ["es2022"],
-    "types": ["node"],
+    "target": "es2023",
+    "lib": ["es2023"],
+    "types": ["./processEnv.d.ts", "node"],
     "module": "nodenext",
     "moduleResolution": "nodenext",
     "resolvePackageJsonExports": true,
@@ -19,6 +19,8 @@
     "noImplicitReturns": true,
     "noUnusedLocals": true,
     "skipLibCheck": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
     "strict": true
   }
 }

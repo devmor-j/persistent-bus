@@ -85,3 +85,20 @@ export function errorToString(error: unknown): string {
 
   return String(error);
 }
+
+export interface DeferredPromise<T = unknown> {
+  promise: Promise<T>;
+  resolve: (value: T | PromiseLike<T>) => void;
+  reject: (reason?: unknown) => void;
+}
+
+export function createDeferred<T = unknown>() {
+  const deferred = {} as DeferredPromise<T>;
+
+  deferred.promise = new Promise((resolve, reject) => {
+    deferred.resolve = resolve;
+    deferred.reject = reject;
+  }) as Promise<T>;
+
+  return deferred;
+}
