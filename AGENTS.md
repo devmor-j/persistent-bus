@@ -1,41 +1,40 @@
-## Agent Quick Reference
+# persistent-bus Agent Instructions
 
-### Development Commands
+## Commands
 
 ```bash
-# Bundle to dist/
-npm run build
-
-# Run Prisma (requires running dev servers via compose)
-npx prisma generate        # generate client from schema
-npx prisma db push         # apply schema changes
-npx prisma migrate create --name desc   # create migration file
-npx prisma migrate apply         # run pending migrations
-
-# Start Postgres + Redis locally
-docker compose up -d && sleep 5
+npm run dev          # Run sample (requires .env file)
+npm run build        # Build to dist/
+npm run prisma:generate # Generate Prisma client (schema.prisma -> src/prisma/generated/)
+npm run prettier     # Format with prettier + organize-imports
 ```
 
-### Environment Variables
+## Setup
 
-Required: `POSTGRES_URL` (PostgreSQL connection string), `REDIS_URL` (Redis connection URL).
+1. Copy `.env.template` to `.env`, fill in `REDIS_URL` and `SQLITE_PATH`
+2. Start Redis: `docker compose up redis`
+3. Build: `npm run build`
+4. Run sample: `npm run dev`
 
-### Architecture
+## Architecture
 
-Entry point: `src/main.ts` exports `EventEnvelope` type and `createPersistentBus` factory function.
+- **Entry**: `src/main.ts` exports `createPersistentBus` and `EventEnvelope` type
+- **Broker** (`src/broker/`): Redis pub/sub via `redis` package + Prisma outbox (SQLite)
+   - Events stored in SQLite before publishing to Redis (outbox pattern for at-least-once delivery)
+- **Service** (`src/service/bus.ts`): `createPersistentBus()` returns `{ publish, subscribe, recallOutbox }`
+  - Outbox statuses: `PENDING -> PROCESSING -> COMPLETED | DEAD`
+  - Retries: exponential backoff up to 60s; after 10 failures event becomes dead
+- **Utils** (`src/utils/utility.ts`): sleep, calculateRetryDelay, withRetry, errorToString
 
-Structure:
-- `src/broker/events.ts` — TypeScript types (`EventEnvelope`, `Handler`, `EventPayloadMap`)
-- `src/broker/pubsub.ts` — Redis pub/sub wrapper (publish/subscribe via Redis)
-- `src/prisma/prisma.ts` — Prisma client connected to PostgreSQL
-- `src/service/bus.ts` — **Core**: Persistent pub/sub with outbox retry, dead queues, recall. Main entrypoint: `createPersistentBus()`
-- `src/utils/utility.ts` — Shared utilities: `sleep()`, `calculateRetryDelay()`, `withRetry<T>()`, `errorToString()`
+## Conventions
 
-Package config: module output to `dist/main.{mjs,cjs}` with dual CJS/ESM + TypeScript declaration exports.
+- Strict TypeScript (`verbatimModuleSyntax`, `noUnusedLocals`)
+- ESM-only output (tsdown dual-format: esm + cjs)
+- Prisma schemas: `schema.prisma` under `src/prisma/` — generate with `npm run prisma:generate`
+- Imports use `.ts`/`.js` extensions (enabled via `allowImportingTsExtensions` in tsconfig)
+- `.env` files are gitignored except `.env.template`
+- Dist is published; other build artifacts ignored
 
-### Code Style & Constraints
+## Testing
 
-- TypeScript strict mode enabled (verbatimModuleSyntax, isolatedModules, noUnusedLocals)
-- Output is bundled via tsdown with never-bundle for native node modules
-- No test framework in place — new tests should be added when possible
-- Logging goes directly to `console.*` via `src/utils/logger.ts`
+Currently the sample at `test/sample.ts` is both documentation and manual test. No automated test framework is configured. To add tests, set up an appropriate test runner alongside Redis in the test environment.

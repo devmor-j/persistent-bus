@@ -1,14 +1,15 @@
-# Boss - Persistent Redis Pub/Sub with At-Least-Once Delivery
+# persistent-bus
 
-A typed, resilient event bus library for Node.js using Redis pub/sub and PostgreSQL outbox pattern.
+Persistent Redis Pub/Sub with at-least-once delivery. A typed, resilient
+event bus library for Node.js that stores events in SQLite before publishing to Redis, ensuring no messages are lost even on broker restarts.
 
 ## Features
 
-- **At-Least-Once Delivery**: Events are persisted to PostgreSQL before being published to Redis, ensuring no messages are lost
+- **At-Least-Once Delivery**: No messages are lost during broker restarts or crashes — events survive on disk before delivery
 - **Automatic Retries**: Failed event handlers are automatically retried with exponential backoff (up to 60s delay)
 - **Dead Letter Handling**: After 10 failed retries, events are marked as "dead" to prevent infinite retry loops
 - **Type Safety**: Full TypeScript support with typed event payloads and envelopes
-- **Outbox Pattern**: All publishes are idempotent and can be recalled if needed
+- **Idempotent Publishing**: Every message is stored in an "outbox" (local queue) before delivery, so repeated publishes don't create duplicates — messages can also be recalled or redelivered programmatically at runtime
 - **Graceful Shutdown**: Proper cleanup on SIGINT/SIGTERM signals
 
 ## License
