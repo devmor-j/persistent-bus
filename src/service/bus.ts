@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 import type { EventEnvelope } from "../broker/events.js";
 import { createPubsub } from "../broker/pubsub.js";
 import { createPrisma } from "../prisma/prisma.js";
-import { logger } from "../utils/logger.js";
 import { calculateRetryDelay, errorToString, sleep } from "../utils/utility.js";
 
 const DEAD_RETRY = 10;
@@ -116,21 +115,15 @@ export async function createPersistentBus<
   const recallOutbox = async () => {
     const ongoingOutboxEvents = await findOngoingOutbox();
 
-    if (ongoingOutboxEvents.length) {
-      logger.info(`recalling ${ongoingOutboxEvents.length} outbox events`);
-    }
-
     for (const outboxEvent of ongoingOutboxEvents) {
       const isDead = outboxEvent.retries > DEAD_RETRY;
 
       if (isDead) {
         await markDeadOutbox(outboxEvent.eventId, "recall:dead");
-        logger.info(`[${outboxEvent.eventName}]:dead`);
       } else {
         await incrementRetryOutbox(outboxEvent.eventId);
 
         try {
-          logger.info(`[${outboxEvent.eventName}]:recalling`);
           await pubsub.publish(outboxEvent.eventName, outboxEvent.data);
         } catch {
           await decrementRetryOutbox(outboxEvent.eventId);
@@ -150,13 +143,11 @@ export async function createPersistentBus<
 
       if (pendingEvent.retries > DEAD_RETRY) {
         await markDeadOutbox(eventId, "retry:dead");
-        logger.info(`[${event}]:dead`);
       } else {
         await incrementRetryOutbox(eventId);
 
         try {
           await pubsub.publish(event, data);
-          logger.info(`[${event}]:retried`);
 
           const retryDelay = calculateRetryDelay(pendingEvent.retries);
           setTimeout(retryIfPending, retryDelay).unref();
@@ -168,7 +159,6 @@ export async function createPersistentBus<
 
     setTimeout(retryIfPending, PENDING_DELAY);
     await pubsub.publish(event, data);
-    logger.info(`[${event}]:dispatched`);
   };
 
   const createSubscriber = <N extends string, P>(
@@ -184,7 +174,6 @@ export async function createPersistentBus<
       try {
         await handler(envelope);
         await markCompletedOutbox(eventId);
-        logger.info(`[${event}]:completed`);
       } catch (err) {
         const outboxEvent = await findOutbox(eventId);
         if (!outboxEvent) return;
@@ -194,7 +183,6 @@ export async function createPersistentBus<
 
         if (isDead) {
           await markDeadOutbox(eventId, errorMessage);
-          logger.info(`[${event}]:dead`);
         } else {
           await incrementRetryOutbox(eventId);
 
