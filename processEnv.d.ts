@@ -3,7 +3,7 @@ export declare global {
     interface ProcessEnv {
       [key: string]: string | undefined;
       NODE_ENV?: "development" | "production" | "test";
-      POSTGRES_URL: string;
+      SQLITE_PATH: string;
       REDIS_URL: string;
     }
   }

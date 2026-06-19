@@ -1,9 +1,9 @@
-import { PrismaPg } from "@prisma/adapter-pg";
+import { PrismaBetterSqlite3 } from "@prisma/adapter-better-sqlite3";
 import { PrismaClient } from "./generated/client.js";
 
-const { POSTGRES_URL } = process.env;
+const { SQLITE_PATH } = process.env;
 
-const adapter = new PrismaPg({ connectionString: POSTGRES_URL });
+const adapter = new PrismaBetterSqlite3({ url: SQLITE_PATH });
 const prisma = new PrismaClient({ adapter });
 
 export { Prisma } from "./generated/client.js";

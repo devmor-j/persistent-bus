@@ -19,7 +19,7 @@ type SubscribeEvents = {
   };
 };
 
-async function test() {
+async function sample() {
   const publisherName = "sample";
 
   const { publish, subscribe, tryClose } = await createPersistentBus<
@@ -45,7 +45,7 @@ async function test() {
 }
 
 try {
-  await test();
+  await sample();
   process.exit(0);
 } catch (err) {
   console.error(err);

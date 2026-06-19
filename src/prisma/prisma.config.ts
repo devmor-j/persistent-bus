@@ -1,7 +1,10 @@
 import "@dotenvx/dotenvx/config";
+import path from "node:path";
 import { defineConfig } from "prisma/config";
 
-const { POSTGRES_URL } = process.env;
+const { SQLITE_PATH } = process.env;
+
+const sqliteAbsolutePath = path.resolve(process.cwd(), SQLITE_PATH);
 
 export default defineConfig({
   schema: "./schema.prisma",
@@ -9,6 +12,6 @@ export default defineConfig({
     path: "./migrations",
   },
   datasource: {
-    url: POSTGRES_URL,
+    url: `file:${sqliteAbsolutePath}`,
   },
 });
