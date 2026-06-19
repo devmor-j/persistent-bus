@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { EventEnvelope } from "../broker/events.js";
 import { createPubsub } from "../broker/pubsub.js";
-import { prisma } from "../prisma/prisma.js";
+import { createPrisma } from "../prisma/prisma.js";
 import { logger } from "../utils/logger.js";
 import { calculateRetryDelay, errorToString, sleep } from "../utils/utility.js";
 
@@ -9,11 +9,19 @@ const DEAD_RETRY = 10;
 const PENDING_DELAY = 10_000;
 const RECALL_SLEEP = 200;
 
+export interface PersistentBusOptions {
+  publisherName: string;
+  redisUrl: string;
+  sqlitePath: string;
+}
+
 export async function createPersistentBus<
   PublisherEvents extends Record<string, any>,
   SubscriberEvents extends Record<string, any>,
->(publisherName: string) {
-  const pubsub = await createPubsub();
+>(options: PersistentBusOptions) {
+  const { redisUrl, sqlitePath, publisherName } = options;
+  const prisma = createPrisma(sqlitePath);
+  const pubsub = await createPubsub(redisUrl);
 
   const createOutbox = async (event: string, payload: any) => {
     const eventId = randomUUID();

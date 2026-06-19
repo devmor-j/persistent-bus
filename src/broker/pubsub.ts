@@ -1,15 +1,10 @@
 import { createClient } from "redis";
 
-const { REDIS_URL } = process.env;
-
-export async function createPubsub() {
-  const publisher = await createClient({
-    url: REDIS_URL,
-  }).connect();
-
-  const subscriber = await createClient({
-    url: REDIS_URL,
-  }).connect();
+export async function createPubsub(redisUrl: string) {
+  const [publisher, subscriber] = await Promise.all([
+    createClient({ url: redisUrl }).connect(),
+    createClient({ url: redisUrl }).connect(),
+  ]);
 
   let isClosing = false;
 
@@ -17,8 +12,7 @@ export async function createPubsub() {
     if (isClosing) return;
     isClosing = true;
 
-    await publisher.close().catch(() => void {});
-    await subscriber.close().catch(() => void {});
+    await Promise.allSettled([publisher.close(), subscriber.close()]);
   };
 
   process.on("SIGINT", tryClose);

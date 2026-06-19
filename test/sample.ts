@@ -1,6 +1,8 @@
 import { createPersistentBus } from "../dist/main.mjs";
 import { createDeferred } from "../src/utils/utility.ts";
 
+const { REDIS_URL, SQLITE_PATH } = process.env;
+
 type PublishEvents = {
   started: {
     userId: string;
@@ -20,12 +22,16 @@ type SubscribeEvents = {
 };
 
 async function sample() {
-  const publisherName = "sample";
+  const options = {
+    publisherName: "sample",
+    redisUrl: REDIS_URL,
+    sqlitePath: SQLITE_PATH,
+  } as const;
 
   const { publish, subscribe, tryClose } = await createPersistentBus<
     PublishEvents,
     SubscribeEvents
-  >(publisherName);
+  >(options);
 
   const deferred = createDeferred();
 
