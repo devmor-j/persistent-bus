@@ -69,4 +69,4 @@ This is a Node.js library called `persistent-bus` that implements a typed, resil
 8. The `RECALL_SLEEP` constant controls delay between recall attempts
 9. The `PENDING_DELAY` constant controls initial delay for pending events
 10. Event envelopes are JSON serialized/dserialized for transport
-111. The `DEAD_RETRY` constant defines the maximum retry attempts before marking as dead
+11. The `DEAD_RETRY` constant defines the maximum retry attempts before marking as dead

@@ -1,5 +1,5 @@
 import { PrismaBetterSqlite3 } from "@prisma/adapter-better-sqlite3";
-import { PrismaClient } from "./generated/client.js";
+import { PrismaClient } from "./generated/client.ts";
 
 function createPrisma(sqlitePath: string) {
   // TODO: should enable WAL? measure default performance first.
@@ -8,5 +8,5 @@ function createPrisma(sqlitePath: string) {
   return new PrismaClient({ adapter });
 }
 
-export { Prisma } from "./generated/client.js";
+export { Prisma } from "./generated/client.ts";
 export { createPrisma };

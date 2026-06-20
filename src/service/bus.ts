@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
-import type { EventEnvelope } from "../broker/events.js";
-import { createPubsub } from "../broker/pubsub.js";
-import { createPrisma } from "../prisma/prisma.js";
-import { calculateRetryDelay, errorToString, sleep } from "../utils/utility.js";
+import type { EventEnvelope } from "../broker/events.ts";
+import { createPubsub } from "../broker/pubsub.ts";
+import { createPrisma } from "../prisma/prisma.ts";
+import { calculateRetryDelay, errorToString, sleep } from "../utils/utility.ts";
 
 const DEAD_RETRY = 10;
 const PENDING_DELAY = 10_000;
@@ -116,7 +116,7 @@ export async function createPersistentBus<
     const ongoingOutboxEvents = await findOngoingOutbox();
 
     for (const outboxEvent of ongoingOutboxEvents) {
-      const isDead = outboxEvent.retries > DEAD_RETRY;
+      const isDead = outboxEvent.retries >= DEAD_RETRY;
 
       if (isDead) {
         await markDeadOutbox(outboxEvent.eventId, "recall:dead");
