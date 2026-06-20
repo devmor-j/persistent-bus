@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "codemem": {
+      "args": [
+        "mcp",
+        "serve"
+      ],
+      "command": "codemem"
+    }
+  }
+}

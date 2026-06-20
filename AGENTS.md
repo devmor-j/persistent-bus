@@ -1,40 +1,72 @@
-# persistent-bus Agent Instructions
+# AGENTS.md
 
-## Commands
+This file documents essential information for agents working in this codebase to help them work effectively and avoid trial-and-error discovery.
 
-```bash
-npm run dev          # Run sample (requires .env file)
-npm run build        # Build to dist/
-npm run prisma:generate # Generate Prisma client (schema.prisma -> src/prisma/generated/)
-npm run prettier     # Format with prettier + organize-imports
-```
+## Project Overview
 
-## Setup
+This is a Node.js library called `persistent-bus` that implements a typed, resilient event bus with at-least-once delivery semantics. It ensures no messages are lost during broker restarts or crashes by storing events in SQLite before publishing to Redis.
 
-1. Copy `.env.template` to `.env`, fill in `REDIS_URL` and `SQLITE_PATH`
-2. Start Redis: `docker compose up redis`
-3. Build: `npm run build`
-4. Run sample: `npm run dev`
+## Key Components
 
-## Architecture
+- **Broker**: Handles Redis pub/sub operations
+- **Prisma**: Manages SQLite persistence using Prisma ORM
+- **Service**: Implements the core persistent bus logic
+- **Utils**: Contains utility functions for retries, delays, and error handling
 
-- **Entry**: `src/main.ts` exports `createPersistentBus` and `EventEnvelope` type
-- **Broker** (`src/broker/`): Redis pub/sub via `redis` package + Prisma outbox (SQLite)
-   - Events stored in SQLite before publishing to Redis (outbox pattern for at-least-once delivery)
-- **Service** (`src/service/bus.ts`): `createPersistentBus()` returns `{ publish, subscribe, recallOutbox }`
-  - Outbox statuses: `PENDING -> PROCESSING -> COMPLETED | DEAD`
-  - Retries: exponential backoff up to 60s; after 10 failures event becomes dead
-- **Utils** (`src/utils/utility.ts`): sleep, calculateRetryDelay, withRetry, errorToString
+## Architecture and Control Flow
 
-## Conventions
+1. Events are published to the bus with `publish()` function
+2. Events are first stored in SQLite via Prisma (outbox)
+3. Events are then published to Redis pub/sub
+4. When subscribers receive messages, they process them and update SQLite status
+5. Failed messages are retried with exponential backoff
+6. After 10 failed retries, messages are marked as "dead" to prevent infinite retry loops
 
-- Strict TypeScript (`verbatimModuleSyntax`, `noUnusedLocals`)
-- ESM-only output (tsdown dual-format: esm + cjs)
-- Prisma schemas: `schema.prisma` under `src/prisma/` — generate with `npm run prisma:generate`
-- Imports use `.ts`/`.js` extensions (enabled via `allowImportingTsExtensions` in tsconfig)
-- `.env` files are gitignored except `.env.template`
-- Dist is published; other build artifacts ignored
+## Essential Commands
 
-## Testing
+- `npm run build` - Compile the project
+- `npm run dev` - Run development test
+- `npm run prisma:generate` - Generate Prisma client code
+- `npm run prisma:migrate` - Run database migrations
+- `npm run prisma:studio` - Start Prisma studio for DB visualization
+- `npm run prettier` - Format code with Prettier
 
-Currently the sample at `test/sample.ts` is both documentation and manual test. No automated test framework is configured. To add tests, set up an appropriate test runner alongside Redis in the test environment.
+## Code Organization
+
+- `src/` - Source code
+  - `main.ts` - Entry point with exports
+  - `broker/` - Redis pub/sub operations
+  - `prisma/` - Database interaction layer
+  - `service/` - Core bus logic
+  - `utils/` - Utility functions
+- `test/` - Test files (sample.ts for example usage)
+
+## Naming Conventions and Style Patterns
+
+- TypeScript with strong typing
+- Event envelopes carry metadata (event name, ID, publisher, timestamp)
+- Retry logic with exponential backoff (up to 60s delay)
+- Dead letter handling after 10 retries
+- Idempotent publishing - messages can be recalled or redelivered
+- Graceful shutdown handling with SIGINT/SIGTERM signals
+
+## Testing Approach
+
+- Uses a sample test file (`test/sample.ts`) demonstrating usage
+- Tests basic publish/subscribe functionality
+- Tests event persistence and delivery semantics
+- Tests error handling and retry mechanisms
+
+## Important Gotchas
+
+1. The `createPersistentBus` function is generic and requires type parameters for publisher and subscriber events
+2. Event handling uses `setTimeout` for retry delays, which is a Node.js pattern
+3. Messages are stored in SQLite before Redis publishing to ensure persistence
+4. Retry logic includes both automatic retries and dead letter handling
+5. The `tryClose` function handles graceful shutdowns for Redis connections
+6. `prisma` database operations are used for event state management
+7. `process.on('SIGINT', tryClose)` and `process.on('SIGTERM', tryClose)` handle graceful shutdowns
+8. The `RECALL_SLEEP` constant controls delay between recall attempts
+9. The `PENDING_DELAY` constant controls initial delay for pending events
+10. Event envelopes are JSON serialized/dserialized for transport
+111. The `DEAD_RETRY` constant defines the maximum retry attempts before marking as dead
