@@ -1,7 +1,9 @@
+import { and, eq, notInArray, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import type { EventEnvelope } from "../broker/events.ts";
 import { createPubsub } from "../broker/pubsub.ts";
-import { createPrisma } from "../prisma/prisma.ts";
+import { createDb } from "../drizzle/client.ts";
+import { outbox } from "../drizzle/schema/index.ts";
 import { calculateRetryDelay, errorToString, sleep } from "../utils/utility.ts";
 
 const DEAD_RETRY = 10;
@@ -19,8 +21,10 @@ export async function createPersistentBus<
   SubscriberEvents extends Record<string, any>,
 >(options: PersistentBusOptions) {
   const { redisUrl, sqlitePath, publisherName } = options;
-  const prisma = createPrisma(sqlitePath);
+  const db = createDb(sqlitePath);
   const pubsub = await createPubsub(redisUrl);
+
+  const now = () => new Date().toISOString();
 
   const createOutbox = async (event: string, payload: any) => {
     const eventId = randomUUID();
@@ -29,18 +33,18 @@ export async function createPersistentBus<
       eventName: event,
       eventId,
       publishedBy: publisherName,
-      publishedAt: new Date().toISOString(),
+      publishedAt: now(),
       payload,
     };
 
     const data = JSON.stringify(envelope);
 
-    await prisma.outbox.create({
-      data: {
+    db.insert(outbox)
+      .values({
         ...envelope,
         data,
-      },
-    });
+      })
+      .run();
 
     return {
       eventId,
@@ -50,67 +54,65 @@ export async function createPersistentBus<
   };
 
   const findOutbox = (eventId: string) =>
-    prisma.outbox.findUnique({
-      where: { eventId },
-      select: { retries: true },
-    });
+    db
+      .select({ retries: outbox.retries })
+      .from(outbox)
+      .where(eq(outbox.eventId, eventId))
+      .get();
 
   const findOngoingOutbox = () =>
-    prisma.outbox.findMany({
-      where: {
-        publishedBy: publisherName,
-        status: { notIn: ["COMPLETED", "DEAD"] },
-      },
-    });
+    db
+      .select()
+      .from(outbox)
+      .where(
+        and(
+          eq(outbox.publishedBy, publisherName),
+          notInArray(outbox.status, ["COMPLETED", "DEAD"]),
+        ),
+      )
+      .all();
 
   const findPendingOutbox = (eventId: string) =>
-    prisma.outbox.findUnique({
-      where: {
-        eventId,
-        status: "PENDING",
-      },
-      select: { retries: true },
-    });
+    db
+      .select({ retries: outbox.retries })
+      .from(outbox)
+      .where(and(eq(outbox.eventId, eventId), eq(outbox.status, "PENDING")))
+      .get();
 
   const markProcessingOutbox = (eventId: string) =>
-    prisma.outbox.update({
-      where: { eventId },
-      data: { status: "PROCESSING" },
-    });
+    db
+      .update(outbox)
+      .set({ status: "PROCESSING", updatedAt: now() })
+      .where(eq(outbox.eventId, eventId))
+      .run();
 
   const markCompletedOutbox = (eventId: string) =>
-    prisma.outbox.update({
-      where: { eventId },
-      data: { status: "COMPLETED" },
-    });
+    db
+      .update(outbox)
+      .set({ status: "COMPLETED", updatedAt: now() })
+      .where(eq(outbox.eventId, eventId))
+      .run();
 
   const incrementRetryOutbox = (eventId: string) =>
-    prisma.outbox.update({
-      where: { eventId },
-      data: {
-        retries: { increment: 1 },
-      },
-    });
+    db
+      .update(outbox)
+      .set({ retries: sql`${outbox.retries} + 1`, updatedAt: now() })
+      .where(eq(outbox.eventId, eventId))
+      .run();
 
   const decrementRetryOutbox = (eventId: string) =>
-    prisma.outbox.update({
-      where: {
-        eventId,
-        retries: { gt: 0 },
-      },
-      data: {
-        retries: { decrement: 1 },
-      },
-    });
+    db
+      .update(outbox)
+      .set({ retries: sql`${outbox.retries} - 1`, updatedAt: now() })
+      .where(and(eq(outbox.eventId, eventId), sql`${outbox.retries} > 0`))
+      .run();
 
   const markDeadOutbox = (eventId: string, error: string) =>
-    prisma.outbox.update({
-      where: { eventId },
-      data: {
-        status: "DEAD",
-        error,
-      },
-    });
+    db
+      .update(outbox)
+      .set({ status: "DEAD", error, updatedAt: now() })
+      .where(eq(outbox.eventId, eventId))
+      .run();
 
   const recallOutbox = async () => {
     const ongoingOutboxEvents = await findOngoingOutbox();
