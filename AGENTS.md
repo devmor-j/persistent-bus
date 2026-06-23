@@ -8,65 +8,74 @@ This is a Node.js library called `persistent-bus` that implements a typed, resil
 
 ## Key Components
 
-- **Broker**: Handles Redis pub/sub operations
-- **Prisma**: Manages SQLite persistence using Prisma ORM
-- **Service**: Implements the core persistent bus logic
-- **Utils**: Contains utility functions for retries, delays, and error handling
+- **Broker**: Handles Redis pub/sub operations using the `redis` library.
+- **SQLite**: Manages persistence using the native Node.js `sqlite3` driver.
+- **Service**: Implements the core persistent bus logic (outbox pattern).
+- **Utils**: Contains utility functions for retries, delays, and error handling.
 
 ## Architecture and Control Flow
 
-1. Events are published to the bus with `publish()` function
-2. Events are first stored in SQLite via Prisma (outbox)
-3. Events are then published to Redis pub/sub
-4. When subscribers receive messages, they process them and update SQLite status
-5. Failed messages are retried with exponential backoff
-6. After 10 failed retries, messages are marked as "dead" to prevent infinite retry loops
+1. **Publishing**:
+   - Events are first stored in SQLite via the `createOutbox` function (the "Outbox").
+   - Events are then published to Redis pub/sub.
+   - If the initial publication fails, a `setTimeout` with exponential backoff is scheduled to retry the publication.
+2. **Subscribing**:
+   - Subscribers receive messages from Redis and are immediately marked as `PROCESSING` in SQLite.
+   - Upon successful processing, they are marked `COMPLETED`.
+   - On failure, the system calculates a retry delay and schedules a re-publication to Redis.
+3. **Recall Mechanism**:
+   - `recallOutgoingOutboxes` — retries publishing for all ongoing outboxes not yet at the retry limit.
+   - `recallDeadOutboxes` — marks outboxes that have hit the retry limit as `DEAD`.
+   - `perishDeadOutboxes` — permanently deletes outboxes that have hit the retry limit from SQLite.
+   - These three functions can be called programmatically at any time (e.g., on startup or on a cron schedule).
+4. **Dead Lettering**:
+   - Messages that exceed `DEAD_RETRY` (10) attempts are marked as `DEAD` to prevent infinite retry loops.
+   - `recallDeadOutboxes` and `perishDeadOutboxes` are the two ways to handle dead events: mark them for inspection or purge them entirely.
 
 ## Essential Commands
 
-- `npm run build` - Compile the project
-- `npm run dev` - Run development test
-- `npm run prisma:generate` - Generate Prisma client code
-- `npm run prisma:migrate` - Run database migrations
-- `npm run prisma:studio` - Start Prisma studio for DB visualization
-- `npm run prettier` - Format code with Prettier
+- `npm run build` - Compile the project using `tsdown`.
+- `npm run dev` - Run the development test suite (`sample.ts`).
+- `npm run prettier` - Format code using Prettier with `organize-imports` plugin.
 
 ## Code Organization
 
 - `src/` - Source code
-  - `main.ts` - Entry point with exports
-  - `broker/` - Redis pub/sub operations
-  - `prisma/` - Database interaction layer
-  - `service/` - Core bus logic
-  - `utils/` - Utility functions
-- `test/` - Test files (sample.ts for example usage)
+  - `main.ts` - Entry point with exports.
+  - `broker/` - Redis pub/sub and `EventEnvelope` definitions.
+  - `service/` - Core persistent bus logic, including SQLite prepared statements.
+  - `utils/` - Utility functions (retries, sleep, etc.).
+- `test/` - Test files (sample.ts for example usage).
 
 ## Naming Conventions and Style Patterns
 
-- TypeScript with strong typing
-- Event envelopes carry metadata (event name, ID, publisher, timestamp)
-- Retry logic with exponential backoff (up to 60s delay)
-- Dead letter handling after 10 retries
-- Idempotent publishing - messages can be recalled or redelivered
-- Graceful shutdown handling with SIGINT/SIGTERM signals
+- **TypeScript**: Strong typing with generics for publisher and subscriber events.
+- **ESM**: The project uses Node.js ECMAScript Modules (`"type": "module"`).
+- **Event Envelopes**: All events carry metadata: `eventName`, `eventId`, `publishedBy`, `publishedAt`, and `payload`.
+- **Retry Logic**: Uses exponential backoff with `setTimeout(...).unref()` to avoid blocking process exit.
+- **Graceful Shutdown**: Handles `SIGINT` and `SIGTERM` via `tryClose` to ensure Redis connections are closed cleanly.
 
 ## Testing Approach
 
-- Uses a sample test file (`test/sample.ts`) demonstrating usage
-- Tests basic publish/subscribe functionality
-- Tests event persistence and delivery semantics
-- Tests error handling and retry mechanisms
+- Uses `test/sample.ts` as a reference for integration testing.
+- Focuses on verifying:
+  - Basic publish/subscribe flow.
+  - Persistence of events in SQLite.
+  - Retry mechanisms and dead letter handling.
+
+## Commit Rules
+
+1. **No attributions**: Never include "Generated with", "Assisted by", harness names, or agent names in commit messages. Commit messages must be clean, professional, and contain only the meaningful description of the change.
 
 ## Important Gotchas
 
-1. The `createPersistentBus` function is generic and requires type parameters for publisher and subscriber events
-2. Event handling uses `setTimeout` for retry delays, which is a Node.js pattern
-3. Messages are stored in SQLite before Redis publishing to ensure persistence
-4. Retry logic includes both automatic retries and dead letter handling
-5. The `tryClose` function handles graceful shutdowns for Redis connections
-6. `prisma` database operations are used for event state management
-7. `process.on('SIGINT', tryClose)` and `process.on('SIGTERM', tryClose)` handle graceful shutdowns
-8. The `RECALL_SLEEP` constant controls delay between recall attempts
-9. The `PENDING_DELAY` constant controls initial delay for pending events
-10. Event envelopes are JSON serialized/dserialized for transport
-11. The `DEAD_RETRY` constant defines the maximum retry attempts before marking as dead
+1. **Generic Constraints**: `createPersistentBus` requires type parameters for `PublisherEvents` and `SubscriberEvents` to ensure type safety across the bus.
+2. **Prepared Statements**: SQLite statements are compiled once during `createPersistentBus` initialization for performance.
+3. **Timeout Unref**: Use `.unref()` on all `setTimeout` calls to prevent the Node.js event loop from staying active indefinitely.
+4. **Database Driver**: Uses the native `sqlite3` driver; ensure the SQLite library is available in the environment.
+5. **Node.js Version**: Requires Node.js >= 22.5.
+6. **Concurrency**: SQLite is used for state tracking; be mindful of write contention if high concurrency is expected.
+7. **Constants**: 
+   - `DEAD_RETRY`: 10 attempts.
+   - `PENDING_DELAY`: Initial delay before first retry.
+   - `RECALL_SLEEP`: Delay between sequential recall attempts.

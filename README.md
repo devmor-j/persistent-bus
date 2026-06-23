@@ -1,7 +1,7 @@
 # persistent-bus
 
 Persistent Redis Pub/Sub with at-least-once delivery. A typed, resilient
-event bus library for Node.js that stores events in SQLite before publishing to Redis, ensuring no messages are lost even on broker restarts.
+event bus library for Node.js that stores events in SQLite before publishing to Redis, ensuring no messages are lost even on broker restarts. This library is zero-dependency (using the native Node.js sqlite module).
 
 ## Features
 

@@ -52,6 +52,12 @@ export async function createPersistentBus<
     updateDead: db.prepare(
       "UPDATE Outbox SET status = 'DEAD', error = ?, updatedAt = ? WHERE eventId = ?",
     ),
+    selectDeadOutboxes: db.prepare(
+      "SELECT * FROM Outbox WHERE publishedBy = ? AND retries >= ? AND status != 'DEAD'",
+    ),
+    deleteDeadOutboxes: db.prepare(
+      "DELETE FROM Outbox WHERE publishedBy = ? AND retries >= ?",
+    ),
   };
 
   const createOutbox = (event: string, payload: any) => {
@@ -111,26 +117,41 @@ export async function createPersistentBus<
   const markDeadOutbox = (eventId: string, error: string) =>
     stmt.updateDead.run(error, nowISO(), eventId);
 
-  const recallOutbox = async () => {
+  const findDeadOutbox = () =>
+    stmt.selectDeadOutboxes.all(publisherName, DEAD_RETRY) as any[];
+
+  const deleteDeadOutbox = () =>
+    stmt.deleteDeadOutboxes.run(publisherName, DEAD_RETRY);
+
+  const recallOutgoingOutboxes = async () => {
     const ongoingOutboxEvents = findOngoingOutbox();
 
     for (const outboxEvent of ongoingOutboxEvents) {
-      const isDead = outboxEvent.retries >= DEAD_RETRY;
+      if (outboxEvent.retries >= DEAD_RETRY) continue;
 
-      if (isDead) {
-        markDeadOutbox(outboxEvent.eventId, "recall:dead");
-      } else {
-        incrementRetryOutbox(outboxEvent.eventId);
+      incrementRetryOutbox(outboxEvent.eventId);
 
-        try {
-          await pubsub.publish(outboxEvent.eventName, outboxEvent.data);
-        } catch {
-          decrementRetryOutbox(outboxEvent.eventId);
-        }
+      try {
+        await pubsub.publish(outboxEvent.eventName, outboxEvent.data);
+      } catch {
+        decrementRetryOutbox(outboxEvent.eventId);
       }
 
       await sleep(RECALL_SLEEP);
     }
+  };
+
+  const recallDeadOutboxes = async () => {
+    const deadOutboxEvents = findDeadOutbox();
+
+    for (const outboxEvent of deadOutboxEvents) {
+      markDeadOutbox(outboxEvent.eventId, "recall:dead");
+      await sleep(RECALL_SLEEP);
+    }
+  };
+
+  const perishDeadOutboxes = () => {
+    deleteDeadOutbox();
   };
 
   const createPublisher = async <N extends string, P>(event: N, payload: P) => {
@@ -207,7 +228,9 @@ export async function createPersistentBus<
   return {
     publish,
     subscribe,
-    recallOutbox,
+    recallOutgoingOutboxes,
+    recallDeadOutboxes,
+    perishDeadOutboxes,
     tryClose: pubsub.tryClose,
   };
 }
