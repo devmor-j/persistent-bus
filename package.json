@@ -6,15 +6,10 @@
     "dev": "npm run build; clear; node ./test/sample.ts",
     "prettier": "npx prettier -wu './src/**/*.{js,cjs,mjs,ts,cts,mts,json,yml,md}'"
   },
-  "dependencies": {
-    "better-sqlite3": "^12.11.1",
-    "drizzle-orm": "^0.45.2"
-  },
+  "dependencies": {},
   "devDependencies": {
     "@dotenvx/dotenvx": "~1.73.1",
-    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "~25.9.3",
-    "drizzle-kit": "^0.31.10",
     "prettier": "~3.8.4",
     "prettier-plugin-organize-imports": "~4.3.0",
     "redis": "~6.0.0",
@@ -50,7 +45,7 @@
     "url": "https://github.com/devmor-j/persistent-bus/issues"
   },
   "engines": {
-    "node": ">=18.12"
+    "node": ">=22.5"
   },
   "author": "Morteza Jamshidi",
   "license": "MIT"

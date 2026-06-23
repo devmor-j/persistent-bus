@@ -1,7 +1,7 @@
 import { defineConfig } from "tsdown";
 
 export default defineConfig({
-  target: "node18",
+  target: "node22",
   outDir: "dist",
   entry: ["src/main.ts"],
   format: ["esm", "cjs"],
