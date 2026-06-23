@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import type { EventEnvelope } from "../broker/events.ts";
 import { createPubsub } from "../broker/pubsub.ts";
 import { createSqliteDb } from "../db.ts";
+import type { OutboxRow, RetriesResult } from "../db.types.ts";
+import { getSql } from "../sql/statements.ts";
 import { calculateRetryDelay, errorToString, sleep } from "../utils/utility.ts";
 
 const DEAD_RETRY = 10;
@@ -15,8 +17,8 @@ export interface PersistentBusOptions {
 }
 
 export async function createPersistentBus<
-  PublisherEvents extends Record<string, any>,
-  SubscriberEvents extends Record<string, any>,
+  PublisherEvents extends Record<string, unknown>,
+  SubscriberEvents extends Record<string, unknown>,
 >(options: PersistentBusOptions) {
   const { redisUrl, sqlitePath, publisherName } = options;
 
@@ -27,44 +29,24 @@ export async function createPersistentBus<
 
   // Prepared statements — compiled once, reused across all calls
   const stmt = {
-    insert: db.prepare(
-      "INSERT INTO Outbox (id, createdAt, updatedAt, eventName, eventId, publishedBy, publishedAt, payload, data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    ),
-    selectRetries: db.prepare("SELECT retries FROM Outbox WHERE eventId = ?"),
-    selectOngoing: db.prepare(
-      "SELECT * FROM Outbox WHERE publishedBy = ? AND status NOT IN ('COMPLETED', 'DEAD')",
-    ),
-    selectPendingRetries: db.prepare(
-      "SELECT retries FROM Outbox WHERE eventId = ? AND status = 'PENDING'",
-    ),
-    updateProcessing: db.prepare(
-      "UPDATE Outbox SET status = 'PROCESSING', updatedAt = ? WHERE eventId = ?",
-    ),
-    updateCompleted: db.prepare(
-      "UPDATE Outbox SET status = 'COMPLETED', updatedAt = ? WHERE eventId = ?",
-    ),
-    incrementRetry: db.prepare(
-      "UPDATE Outbox SET retries = retries + 1, updatedAt = ? WHERE eventId = ?",
-    ),
-    decrementRetry: db.prepare(
-      "UPDATE Outbox SET retries = retries - 1, updatedAt = ? WHERE eventId = ? AND retries > 0",
-    ),
-    updateDead: db.prepare(
-      "UPDATE Outbox SET status = 'DEAD', error = ?, updatedAt = ? WHERE eventId = ?",
-    ),
-    selectDeadOutboxes: db.prepare(
-      "SELECT * FROM Outbox WHERE publishedBy = ? AND retries >= ? AND status != 'DEAD'",
-    ),
-    deleteDeadOutboxes: db.prepare(
-      "DELETE FROM Outbox WHERE publishedBy = ? AND retries >= ?",
-    ),
+    insert: db.prepare(getSql("insert")),
+    selectRetries: db.prepare(getSql("selectRetries")),
+    selectOngoing: db.prepare(getSql("selectOngoing")),
+    selectPendingRetries: db.prepare(getSql("selectPendingRetries")),
+    updateProcessing: db.prepare(getSql("updateProcessing")),
+    updateCompleted: db.prepare(getSql("updateCompleted")),
+    incrementRetry: db.prepare(getSql("incrementRetry")),
+    decrementRetry: db.prepare(getSql("decrementRetry")),
+    updateDead: db.prepare(getSql("updateDead")),
+    selectDeadOutboxes: db.prepare(getSql("selectDeadOutboxes")),
+    deleteDeadOutboxes: db.prepare(getSql("deleteDeadOutboxes")),
   };
 
-  const createOutbox = (event: string, payload: any) => {
+  const createOutbox = (event: string, payload: unknown) => {
     const eventId = randomUUID();
     const timestamp = nowISO();
 
-    const envelope: EventEnvelope<typeof event, typeof payload> = {
+    const envelope: EventEnvelope<string, unknown> = {
       eventName: event,
       eventId,
       publishedBy: publisherName,
@@ -93,14 +75,14 @@ export async function createPersistentBus<
     };
   };
 
-  const findOutbox = (eventId: string) =>
-    stmt.selectRetries.get(eventId) as { retries: number } | undefined;
+  const findOutbox = (eventId: string): RetriesResult | undefined =>
+    stmt.selectRetries.get(eventId) as RetriesResult | undefined;
 
-  const findOngoingOutbox = () =>
-    stmt.selectOngoing.all(publisherName) as any[];
+  const findOngoingOutbox = (): OutboxRow[] =>
+    stmt.selectOngoing.all(publisherName) as unknown as OutboxRow[];
 
-  const findPendingOutbox = (eventId: string) =>
-    stmt.selectPendingRetries.get(eventId) as { retries: number } | undefined;
+  const findPendingOutbox = (eventId: string): RetriesResult | undefined =>
+    stmt.selectPendingRetries.get(eventId) as RetriesResult | undefined;
 
   const markProcessingOutbox = (eventId: string) =>
     stmt.updateProcessing.run(nowISO(), eventId);
@@ -117,8 +99,11 @@ export async function createPersistentBus<
   const markDeadOutbox = (eventId: string, error: string) =>
     stmt.updateDead.run(error, nowISO(), eventId);
 
-  const findDeadOutbox = () =>
-    stmt.selectDeadOutboxes.all(publisherName, DEAD_RETRY) as any[];
+  const findDeadOutbox = (): OutboxRow[] =>
+    stmt.selectDeadOutboxes.all(
+      publisherName,
+      DEAD_RETRY,
+    ) as unknown as OutboxRow[];
 
   const deleteDeadOutbox = () =>
     stmt.deleteDeadOutboxes.run(publisherName, DEAD_RETRY);

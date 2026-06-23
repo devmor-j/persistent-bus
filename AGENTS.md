@@ -38,6 +38,15 @@ This is a Node.js library called `persistent-bus` that implements a typed, resil
 - `npm run dev` - Run the development test suite (`sample.ts`).
 - `npm run prettier` - Format code using Prettier with `organize-imports` plugin.
 
+## Version Targets
+
+| Config | Value | Rationale |
+|---|---|---|
+| Node.js (engines) | `>=22.5` | `node:sqlite` (DatabaseSync) added in 22.5. |
+| tsdown target | `node22` | Output optimized for Node 22 runtime. |
+| TS target | `es2023` | ECMAScript version matching Node 22 capabilities. |
+| TS lib | `es2023` | Type definitions for ES2023 built-in APIs. |
+
 ## Code Organization
 
 - `src/` - Source code
@@ -65,7 +74,8 @@ This is a Node.js library called `persistent-bus` that implements a typed, resil
 
 ## Commit Rules
 
-1. **No attributions**: Never include "Generated with", "Assisted by", harness names, or agent names in commit messages. Commit messages must be clean, professional, and contain only the meaningful description of the change.
+1. **Natural casing**: Commit messages must use natural casing as a human writer would — first letter capitalized, proper nouns and acronyms (SQL, Node.js, TypeScript, etc.) capitalized normally. Never force everything to lowercase.
+2. **No attributions**: Never include "Generated with", "Assisted by", harness names, or agent names in commit messages. Commit messages must be clean, professional, and contain only the meaningful description of the change.
 
 ## Important Gotchas
 
@@ -75,7 +85,7 @@ This is a Node.js library called `persistent-bus` that implements a typed, resil
 4. **Database Driver**: Uses the native `sqlite3` driver; ensure the SQLite library is available in the environment.
 5. **Node.js Version**: Requires Node.js >= 22.5.
 6. **Concurrency**: SQLite is used for state tracking; be mindful of write contention if high concurrency is expected.
-7. **Constants**: 
+7. **Constants**:
    - `DEAD_RETRY`: 10 attempts.
    - `PENDING_DELAY`: Initial delay before first retry.
    - `RECALL_SLEEP`: Delay between sequential recall attempts.

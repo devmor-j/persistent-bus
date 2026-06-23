@@ -7,6 +7,9 @@ export default defineConfig({
   format: ["esm", "cjs"],
   clean: true,
   dts: true,
+  loader: {
+    ".sql": "text",
+  },
   deps: {
     neverBundle: [/\.node$/],
   },
