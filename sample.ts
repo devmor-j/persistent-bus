@@ -1,8 +1,9 @@
+import "@dotenvx/dotenvx/config";
 import {
   createPersistentBus,
   type PersistentBusOptions,
-} from "../dist/main.mjs";
-import { createDeferred } from "../src/utils/utility.ts";
+} from "./dist/main.mjs";
+import { createDeferred } from "./src/utils/utility.ts";
 
 const { REDIS_URL, SQLITE_PATH } = process.env;
 

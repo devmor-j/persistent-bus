@@ -12,6 +12,9 @@ export async function createPubsub(redisUrl: string) {
     if (isClosing) return;
     isClosing = true;
 
+    process.off("SIGINT", tryClose);
+    process.off("SIGTERM", tryClose);
+
     await Promise.allSettled([publisher.close(), subscriber.close()]);
   };
 

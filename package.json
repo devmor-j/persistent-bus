@@ -3,13 +3,16 @@
   "version": "0.0.0",
   "scripts": {
     "build": "tsdown",
-    "dev": "npm run build; clear; node ./test/sample.ts",
-    "prettier": "npx prettier -wu './src/**/*.{js,cjs,mjs,ts,cts,mts,json,yml,md}'"
+    "dev": "npm run build; clear; node ./sample.ts",
+    "test": "bash scripts/test.sh",
+    "test:coverage": "npx lcov-badge2 coverage/lcov.info -o coverage.svg",
+    "prepublishOnly": "npm run build && npm run test",
+    "prettier": "npx prettier -wu './(src|test)/**/*.{js,cjs,mjs,ts,cts,mts,json,yml,md}'"
   },
-  "dependencies": {},
   "devDependencies": {
-    "@dotenvx/dotenvx": "~1.73.1",
-    "@types/node": "~25.9.3",
+    "@dotenvx/dotenvx": "~1.75.1",
+    "@types/node": "~26.0.0",
+    "lcov-badge2": "~1.1.4",
     "prettier": "~3.8.4",
     "prettier-plugin-organize-imports": "~4.3.0",
     "redis": "~6.0.0",
@@ -32,8 +35,22 @@
   ],
   "keywords": [
     "event-bus",
-    "redis-pubsub",
-    "persistence-events"
+    "event-driven",
+    "message-queue",
+    "pub-sub",
+    "redis",
+    "sqlite",
+    "outbox",
+    "outbox-pattern",
+    "at-least-once",
+    "reliable-messaging",
+    "resilient",
+    "fault-tolerant",
+    "durable",
+    "persistent",
+    "typescript",
+    "nodejs",
+    "dead-letter"
   ],
   "description": "",
   "repository": {

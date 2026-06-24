@@ -2,6 +2,17 @@
 
 This file documents essential information for agents working in this codebase to help them work effectively and avoid trial-and-error discovery.
 
+## Codemem
+
+MANDATORY: Before ANY file operation, load `.claude/skills/codemem/SKILL.md`. No exceptions.
+
+MEMORY RULE: Save user decisions, preferences, and project rules as `codemem` memories.
+If I say "always do X" or "I prefer Y" — store it.
+
+## Code Quality Rules
+
+- Never organize or group imports, instead run `npm run prettier` before done.
+
 ## Project Overview
 
 This is a Node.js library called `persistent-bus` that implements a typed, resilient event bus with at-least-once delivery semantics. It ensures no messages are lost during broker restarts or crashes by storing events in SQLite before publishing to Redis.
@@ -34,9 +45,10 @@ This is a Node.js library called `persistent-bus` that implements a typed, resil
 
 ## Essential Commands
 
-- `npm run build` - Compile the project using `tsdown`.
-- `npm run dev` - Run the development test suite (`sample.ts`).
-- `npm run prettier` - Format code using Prettier with `organize-imports` plugin.
+- `npm run build` - Compiles the project using `tsdown`.
+- `npm run dev` - Runs the development `sample.ts`.
+- `npm run test` - Runs the `test.sh` and generates coverage svg.
+- `npm run prettier` - Formats repo using `prettier`.
 
 ## Version Targets
 
@@ -63,14 +75,6 @@ This is a Node.js library called `persistent-bus` that implements a typed, resil
 - **Event Envelopes**: All events carry metadata: `eventName`, `eventId`, `publishedBy`, `publishedAt`, and `payload`.
 - **Retry Logic**: Uses exponential backoff with `setTimeout(...).unref()` to avoid blocking process exit.
 - **Graceful Shutdown**: Handles `SIGINT` and `SIGTERM` via `tryClose` to ensure Redis connections are closed cleanly.
-
-## Testing Approach
-
-- Uses `test/sample.ts` as a reference for integration testing.
-- Focuses on verifying:
-  - Basic publish/subscribe flow.
-  - Persistence of events in SQLite.
-  - Retry mechanisms and dead letter handling.
 
 ## Commit Rules
 

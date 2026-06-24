@@ -6,11 +6,12 @@ export default defineConfig({
   entry: ["src/main.ts"],
   format: ["esm", "cjs"],
   clean: true,
+  sourcemap: true,
   dts: true,
   loader: {
     ".sql": "text",
   },
   deps: {
-    neverBundle: [/\.node$/],
+    neverBundle: ["redis"],
   },
 });
