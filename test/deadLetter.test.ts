@@ -51,37 +51,6 @@ describe("subscriber failure and dead lettering", () => {
 
     await bus.tryClose();
   });
-
-  it("marks DEAD via recallDeadOutboxes when retries >= DEAD_RETRY", async () => {
-    const dbPath = tmpDbPath();
-    const bus = await createPersistentBus({
-      publisherName: randomUUID(),
-      redisUrl: REDIS_URL,
-      sqlitePath: dbPath,
-    });
-    const eventName = randomEventName();
-
-    await bus.publish(eventName, { dead: true });
-    await new Promise((r) => setTimeout(r, 200));
-
-    const db = new DatabaseSync(dbPath);
-    db.exec(
-      `UPDATE Outbox SET retries = ${DEAD_RETRY} WHERE eventName = '${eventName}'`,
-    );
-    db.close();
-
-    await bus.recallDeadOutboxes();
-
-    const db2 = new DatabaseSync(dbPath);
-    const row = db2
-      .prepare("SELECT status, error FROM Outbox WHERE eventName = ?")
-      .get(eventName) as Record<string, unknown>;
-    db2.close();
-    assert.equal(row.status, "DEAD");
-    assert.equal(row.error, "recall:dead");
-
-    await bus.tryClose();
-  });
 });
 
 describe("retry decrement on publish failure", () => {

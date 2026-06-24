@@ -2,7 +2,7 @@
 
 <!-- rumdl-disable MD033 -->
 <p align="center">
-  <img src="https://raw.githubusercontent.com/devmor-j/persistent-bus/main/logo.webp" alt="logo" width="349">
+  <img src="https://raw.githubusercontent.com/devmor-j/persistent-bus/main/logo.webp" alt="logo" width="384">
 </p>
 
 <p align="center">
@@ -20,7 +20,7 @@ guaranteeing no messages are lost during broker restarts or crashes.
 
 - 📦 Zero dependencies (uses native `node:sqlite`)
 - 🔁 At-least-once delivery with automatic retries and dead lettering
-- 🧪 Fully typed with TypeScript generics
+- 🧪 Fully typed with high test coverage
 - 📄 Dual ESM / CJS with bundled type declarations
 
 ---
@@ -143,10 +143,10 @@ bus.subscribe("order.placed", async (envelope) => {
 // Retry all ongoing (not COMPLETED/DEAD) events for this publisher.
 await bus.recallOutgoingOutboxes();
 
-// Finalize events that exceeded the retry limit but aren't DEAD yet.
+// Re-publish all DEAD events (sorted by updatedAt, 200ms apart).
 await bus.recallDeadOutboxes();
 
-// Permanently delete DEAD events from outbox db.
+// Delete DEAD events older than 7 days (default). Pass 0 to delete all.
 await bus.perishDeadOutboxes();
 ```
 
@@ -159,20 +159,24 @@ await bus.perishDeadOutboxes();
 Creates a bus instance. Two type parameters let you optionally constrain
 published and subscribed events differently.
 
-| Option          | Type     | Description                                  |
-| --------------- | -------- | -------------------------------------------- |
-| `publisherName` | `string` | Logical name scoping this publisher's events |
-| `redisUrl`      | `string` | Redis connection URL                         |
-| `sqlitePath`    | `string` | Path to the SQLite database file             |
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `publisherName` | `string` | — | Logical name scoping this publisher's events |
+| `redisUrl` | `string` | — | Redis connection URL |
+| `sqlitePath` | `string` | — | Path to the SQLite database file |
+| `maxRetries` | `number` | `10` | Max retry attempts before marking an event `DEAD` |
+| `pendingDelayMs` | `number` | `10_000` | Delay in ms before first pending-retry check |
+| `recallIntervalMs` | `number` | `200` | Delay in ms between individual recall publishes |
 
 Returns a bus instance with the following methods:
 
 ### `bus.publish(eventName, payload)`
 
-Stores the event in SQLite and publishes it to Redis. If the initial Redis
-publish succeeds, a background timer retries every 10s until the subscriber
-consumes the event. If Redis is down, the event is safely on disk and will be
-published later via `recallOutgoingOutboxes()`.
+Stores the event in SQLite and publishes it to Redis immediately. A one-shot
+background timer fires after `pendingDelayMs` (default 10s) and re-publishes if
+the event is still `PENDING` (nobody consumed it yet). Subsequent retries use
+exponential backoff via `retryIfPending`. If Redis is down, the event stays on
+disk and can be published later via `recallOutgoingOutboxes()`.
 
 ### `bus.subscribe(eventName, handler)`
 
@@ -207,12 +211,14 @@ Useful to call on startup or on a cron schedule.
 
 ### `bus.recallDeadOutboxes()`
 
-Marks events that have reached the retry limit (≥10) as `DEAD`. This gives you
-a chance to inspect them before purging.
+Finds all events with `status = 'DEAD'` for this publisher and re-publishes
+them to Redis (sorted by `updatedAt`, 200ms apart). Useful to retry after
+fixing the cause of failure.
 
-### `bus.perishDeadOutboxes()`
+### `bus.perishDeadOutboxes(maxAgeDays?)`
 
-Permanently deletes all events that have reached the retry limit from SQLite.
+Deletes DEAD events older than `maxAgeDays` from SQLite. Defaults to 7 days.
+Pass `0` to delete all DEAD events immediately regardless of age.
 
 ### `bus.tryClose()`
 

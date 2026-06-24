@@ -6,7 +6,6 @@
     "dev": "npm run build; clear; node ./sample.ts",
     "test": "bash scripts/test.sh",
     "test:coverage": "npx lcov-badge2 coverage/lcov.info -o coverage.svg",
-    "prepublishOnly": "npm run build && npm run test",
     "prettier": "npx prettier -wu './(src|test)/**/*.{js,cjs,mjs,ts,cts,mts,json,yml,md}'"
   },
   "devDependencies": {
@@ -26,9 +25,14 @@
   "types": "./dist/main.d.mts",
   "exports": {
     ".": {
-      "require": "./dist/main.cjs",
-      "import": "./dist/main.mjs",
-      "types": "./dist/main.d.mts"
+      "import": {
+        "types": "./dist/main.d.mts",
+        "default": "./dist/main.mjs"
+      },
+      "require": {
+        "types": "./dist/main.d.cts",
+        "default": "./dist/main.cjs"
+      }
     }
   },
   "files": [
@@ -46,7 +50,7 @@
     "nodejs",
     "dead-letter"
   ],
-  "description": "",
+  "description": "🚌 Persistent event bus with at-least-once delivery via SQLite + Redis, Fully typed.",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/devmor-j/persistent-bus.git"

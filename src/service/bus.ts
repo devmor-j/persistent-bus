@@ -6,21 +6,30 @@ import type { OutboxRow, RetriesResult } from "../db.types.ts";
 import { getSql } from "../sql/statements.ts";
 import { calculateRetryDelay, errorToString, sleep } from "../utils/utility.ts";
 
-const DEAD_RETRY = 10;
-const PENDING_DELAY = 10_000;
-const RECALL_SLEEP = 200;
-
 export interface PersistentBusOptions {
   publisherName: string;
   redisUrl: string;
   sqlitePath: string;
+  /** Max retry attempts before marking an event DEAD (default: 10). */
+  maxRetries?: number;
+  /** Delay in ms before first pending retry check (default: 10_000). */
+  pendingDelayMs?: number;
+  /** Delay in ms between individual recall publishes (default: 200). */
+  recallIntervalMs?: number;
 }
 
 export async function createPersistentBus<
   PublisherEvents extends Record<string, unknown>,
   SubscriberEvents extends Record<string, unknown>,
 >(options: PersistentBusOptions) {
-  const { redisUrl, sqlitePath, publisherName } = options;
+  const {
+    redisUrl,
+    sqlitePath,
+    publisherName,
+    maxRetries = 10,
+    pendingDelayMs = 10_000,
+    recallIntervalMs = 200,
+  } = options;
 
   const db = createSqliteDb(sqlitePath);
   const pubsub = await createPubsub(redisUrl);
@@ -40,6 +49,9 @@ export async function createPersistentBus<
     updateDead: db.prepare(getSql("updateDead")),
     selectDeadOutboxes: db.prepare(getSql("selectDeadOutboxes")),
     deleteDeadOutboxes: db.prepare(getSql("deleteDeadOutboxes")),
+    deleteDeadOutboxesOlderThan: db.prepare(
+      getSql("deleteDeadOutboxesOlderThan"),
+    ),
   };
 
   const createOutbox = (event: string, payload: unknown) => {
@@ -100,19 +112,13 @@ export async function createPersistentBus<
     stmt.updateDead.run(error, nowISO(), eventId);
 
   const findDeadOutbox = (): OutboxRow[] =>
-    stmt.selectDeadOutboxes.all(
-      publisherName,
-      DEAD_RETRY,
-    ) as unknown as OutboxRow[];
-
-  const deleteDeadOutbox = () =>
-    stmt.deleteDeadOutboxes.run(publisherName, DEAD_RETRY);
+    stmt.selectDeadOutboxes.all(publisherName) as unknown as OutboxRow[];
 
   const recallOutgoingOutboxes = async () => {
     const ongoingOutboxEvents = findOngoingOutbox();
 
     for (const outboxEvent of ongoingOutboxEvents) {
-      if (outboxEvent.retries >= DEAD_RETRY) continue;
+      if (outboxEvent.retries >= maxRetries) continue;
 
       incrementRetryOutbox(outboxEvent.eventId);
 
@@ -122,7 +128,7 @@ export async function createPersistentBus<
         decrementRetryOutbox(outboxEvent.eventId);
       }
 
-      await sleep(RECALL_SLEEP);
+      await sleep(recallIntervalMs);
     }
   };
 
@@ -130,13 +136,25 @@ export async function createPersistentBus<
     const deadOutboxEvents = findDeadOutbox();
 
     for (const outboxEvent of deadOutboxEvents) {
-      markDeadOutbox(outboxEvent.eventId, "recall:dead");
-      await sleep(RECALL_SLEEP);
+      try {
+        await pubsub.publish(outboxEvent.eventName, outboxEvent.data);
+      } catch {
+        // Publish failed — event stays DEAD for a future retry.
+      }
+
+      await sleep(recallIntervalMs);
     }
   };
 
-  const perishDeadOutboxes = () => {
-    deleteDeadOutbox();
+  const perishDeadOutboxes = (maxAgeDays = 7) => {
+    if (maxAgeDays === 0) {
+      stmt.deleteDeadOutboxes.run(publisherName);
+    } else {
+      const cutoff = new Date(
+        Date.now() - maxAgeDays * 24 * 60 * 60 * 1000,
+      ).toISOString();
+      stmt.deleteDeadOutboxesOlderThan.run(publisherName, cutoff);
+    }
   };
 
   const createPublisher = async <N extends string, P>(event: N, payload: P) => {
@@ -146,7 +164,7 @@ export async function createPersistentBus<
       const pendingEvent = findPendingOutbox(eventId);
       if (!pendingEvent) return;
 
-      if (pendingEvent.retries > DEAD_RETRY) {
+      if (pendingEvent.retries > maxRetries) {
         markDeadOutbox(eventId, "retry:dead");
       } else {
         incrementRetryOutbox(eventId);
@@ -162,7 +180,7 @@ export async function createPersistentBus<
       }
     };
 
-    setTimeout(retryIfPending, PENDING_DELAY);
+    setTimeout(retryIfPending, pendingDelayMs);
     await pubsub.publish(event, data);
   };
 
@@ -184,7 +202,7 @@ export async function createPersistentBus<
         if (!outboxEvent) return;
 
         const errorMessage = errorToString(err);
-        const isDead = outboxEvent.retries > DEAD_RETRY;
+        const isDead = outboxEvent.retries > maxRetries;
 
         if (isDead) {
           markDeadOutbox(eventId, errorMessage);

@@ -252,3 +252,41 @@ describe("concurrent events", () => {
     await bus.tryClose();
   });
 });
+
+describe("foreign event handling", () => {
+  it("subscriber gracefully handles failure for events not in own outbox", async () => {
+    // busA publishes, busB subscribes with a throwing handler.
+    // busB's catch block should find no outbox (foreign event) and exit.
+    const dbPathB = tmpDbPath();
+    const busA = await createPersistentBus({
+      publisherName: randomUUID(),
+      redisUrl: REDIS_URL,
+      sqlitePath: tmpDbPath(),
+    });
+    const busB = await createPersistentBus({
+      publisherName: randomUUID(),
+      redisUrl: REDIS_URL,
+      sqlitePath: dbPathB,
+    });
+    const eventName = randomEventName();
+
+    busB.subscribe(eventName, async () => {
+      throw new Error("foreign event failure");
+    });
+
+    await new Promise((r) => setTimeout(r, 200));
+    await busA.publish(eventName, { from: "A" });
+    await new Promise((r) => setTimeout(r, 500));
+
+    // busB's DB should have no rows — the foreign event was silently skipped
+    const db = new DatabaseSync(dbPathB);
+    const rows = db
+      .prepare("SELECT COUNT(*) AS cnt FROM Outbox WHERE eventName = ?")
+      .get(eventName) as Record<string, number>;
+    db.close();
+    assert.equal(rows.cnt, 0);
+
+    await busA.tryClose();
+    await busB.tryClose();
+  });
+});

@@ -3,7 +3,6 @@ import {
   createPersistentBus,
   type PersistentBusOptions,
 } from "./dist/main.mjs";
-import { createDeferred } from "./src/utils/utility.ts";
 
 const { REDIS_URL, SQLITE_PATH } = process.env;
 
@@ -37,20 +36,20 @@ async function sample() {
     SubscribeEvents
   >(options);
 
-  const deferred = createDeferred();
+  const done = new Promise<void>((resolve) => {
+    subscribe("finished", async (envelope) => {
+      console.log(envelope.eventName);
+      resolve();
+    });
+  });
 
   subscribe("started", async (envelope) => {
     console.log(envelope.eventName);
     await publish("finished", { totalTime: 0 });
   });
 
-  subscribe("finished", async (envelope) => {
-    console.log(envelope.eventName);
-    deferred.resolve(null);
-  });
-
   await publish("started", { userId: "0" });
-  await deferred.promise;
+  await done;
   await tryClose();
 }
 

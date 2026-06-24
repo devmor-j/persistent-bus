@@ -2,9 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   calculateRetryDelay,
-  createDeferred,
   sleep,
-  withRetry,
 } from "../src/utils/utility.ts";
 
 describe("calculateRetryDelay", () => {
@@ -41,58 +39,5 @@ describe("sleep", () => {
     const start = Date.now();
     await sleep(50);
     assert.ok(Date.now() - start >= 40);
-  });
-});
-
-describe("createDeferred", () => {
-  it("creates a deferred that can be resolved", async () => {
-    const d = createDeferred<number>();
-    d.resolve(42);
-    assert.equal(await d.promise, 42);
-  });
-
-  it("creates a deferred that can be rejected", async () => {
-    const d = createDeferred();
-    d.reject(new Error("fail"));
-    await assert.rejects(() => d.promise, /fail/);
-  });
-});
-
-describe("withRetry", () => {
-  it("resolves on first attempt if fn succeeds", async () => {
-    const result = await withRetry(() => Promise.resolve("ok"), {
-      retries: 3,
-    });
-    assert.equal(result, "ok");
-  });
-
-  it("retries on failure and eventually succeeds", async () => {
-    let attempts = 0;
-    const result = await withRetry(
-      () => {
-        attempts++;
-        if (attempts < 3) return Promise.reject(new Error("not yet"));
-        return Promise.resolve("finally");
-      },
-      { retries: 5, maxDelay: 10 },
-    );
-    assert.equal(result, "finally");
-    assert.equal(attempts, 3);
-  });
-
-  it("rejects after all retries exhausted", async () => {
-    let attempts = 0;
-    await assert.rejects(
-      () =>
-        withRetry(
-          () => {
-            attempts++;
-            return Promise.reject(new Error("persistent"));
-          },
-          { retries: 3, maxDelay: 10 },
-        ),
-      /persistent/,
-    );
-    assert.equal(attempts, 3);
   });
 });

@@ -87,7 +87,7 @@ describe("recallOutgoingOutboxes", () => {
 });
 
 describe("recallDeadOutboxes", () => {
-  it("marks events with retries >= DEAD_RETRY as DEAD", async () => {
+  it("re-publishes DEAD events to subscribers", async () => {
     const dbPath = tmpDbPath();
     const bus = await createPersistentBus({
       publisherName: "dead-recall",
@@ -96,29 +96,36 @@ describe("recallDeadOutboxes", () => {
     });
     const eventName = randomEventName();
 
-    await bus.publish(eventName, { dead: true });
+    await bus.publish(eventName, { retry: true });
     await new Promise((r) => setTimeout(r, 100));
 
+    // Set status to DEAD directly so recallDeadOutboxes picks it up
     const db = new DatabaseSync(dbPath);
     db.exec(
-      `UPDATE Outbox SET retries = ${DEAD_RETRY} WHERE eventName = '${eventName}'`,
+      `UPDATE Outbox SET status = 'DEAD' WHERE eventName = '${eventName}'`,
     );
     db.close();
 
-    await bus.recallDeadOutboxes();
+    // Subscribe on second bus to catch the re-publish
+    const bus2 = await createPersistentBus({
+      publisherName: randomUUID(),
+      redisUrl: REDIS_URL,
+      sqlitePath: tmpDbPath(),
+    });
+    const received: unknown[] = [];
+    bus2.subscribe(eventName, async (env) => received.push(env));
+    await new Promise((r) => setTimeout(r, 200));
 
-    const db2 = new DatabaseSync(dbPath);
-    const row = db2
-      .prepare("SELECT status, error FROM Outbox WHERE eventName = ?")
-      .get(eventName) as Record<string, unknown>;
-    db2.close();
-    assert.equal(row.status, "DEAD");
-    assert.equal(row.error, "recall:dead");
+    await bus.recallDeadOutboxes();
+    await new Promise((r) => setTimeout(r, 500));
+
+    assert.equal(received.length, 1);
 
     await bus.tryClose();
+    await bus2.tryClose();
   });
 
-  it("does not affect events with retries below DEAD_RETRY", async () => {
+  it("does not affect non-DEAD events", async () => {
     const dbPath = tmpDbPath();
     const bus = await createPersistentBus({
       publisherName: randomUUID(),
@@ -136,7 +143,8 @@ describe("recallDeadOutboxes", () => {
       .prepare("SELECT status FROM Outbox WHERE eventName = ?")
       .get(eventName) as Record<string, string>;
     db.close();
-    assert.notEqual(row.status, "DEAD");
+    // Event is PENDING (not DEAD) so recallDeadOutboxes skips it
+    assert.equal(row.status, "PENDING");
 
     await bus.tryClose();
   });
@@ -159,37 +167,39 @@ describe("recallDeadOutboxes", () => {
     await busA.publish(evtA, { owned: "A" });
     await new Promise((r) => setTimeout(r, 100));
 
+    // Set busA's event to DEAD
     const db = new DatabaseSync(dbPathA);
-    db.exec(
-      `UPDATE Outbox SET retries = ${DEAD_RETRY} WHERE eventName = '${evtA}'`,
-    );
+    db.exec(`UPDATE Outbox SET status = 'DEAD' WHERE eventName = '${evtA}'`);
     db.close();
 
+    // Listener bus catches any re-publish
+    const listener = await createPersistentBus({
+      publisherName: randomUUID(),
+      redisUrl: REDIS_URL,
+      sqlitePath: tmpDbPath(),
+    });
+    const received: unknown[] = [];
+    listener.subscribe(evtA, async (env) => received.push(env));
+    await new Promise((r) => setTimeout(r, 200));
+
+    // busB calls recall — should NOT publish busA's event
     await busB.recallDeadOutboxes();
+    await new Promise((r) => setTimeout(r, 300));
+    assert.equal(received.length, 0);
 
-    const db2 = new DatabaseSync(dbPathA);
-    const row = db2
-      .prepare("SELECT status FROM Outbox WHERE eventName = ?")
-      .get(evtA) as Record<string, unknown>;
-    db2.close();
-    assert.notEqual(row.status, "DEAD");
-
+    // busA calls recall — publishes its own DEAD event
     await busA.recallDeadOutboxes();
-
-    const db3 = new DatabaseSync(dbPathA);
-    const row2 = db3
-      .prepare("SELECT status FROM Outbox WHERE eventName = ?")
-      .get(evtA) as Record<string, unknown>;
-    db3.close();
-    assert.equal(row2.status, "DEAD");
+    await new Promise((r) => setTimeout(r, 300));
+    assert.equal(received.length, 1);
 
     await busA.tryClose();
     await busB.tryClose();
+    await listener.tryClose();
   });
 });
 
 describe("perishDeadOutboxes", () => {
-  it("deletes events with retries >= DEAD_RETRY", async () => {
+  it("deletes DEAD events older than maxAgeDays", async () => {
     const dbPath = tmpDbPath();
     const bus = await createPersistentBus({
       publisherName: "perish-test",
@@ -201,13 +211,14 @@ describe("perishDeadOutboxes", () => {
     await bus.publish(eventName, { perish: true });
     await new Promise((r) => setTimeout(r, 100));
 
+    // Set status to DEAD with an old updatedAt
     const db = new DatabaseSync(dbPath);
     db.exec(
-      `UPDATE Outbox SET retries = ${DEAD_RETRY} WHERE eventName = '${eventName}'`,
+      `UPDATE Outbox SET status = 'DEAD', updatedAt = '2020-01-01T00:00:00.000Z' WHERE eventName = '${eventName}'`,
     );
     db.close();
 
-    bus.perishDeadOutboxes();
+    bus.perishDeadOutboxes(1); // delete DEAD events older than 1 day
 
     const db2 = new DatabaseSync(dbPath);
     const row = db2
@@ -219,7 +230,7 @@ describe("perishDeadOutboxes", () => {
     await bus.tryClose();
   });
 
-  it("does not delete events below DEAD_RETRY", async () => {
+  it("does not delete recent DEAD events", async () => {
     const dbPath = tmpDbPath();
     const bus = await createPersistentBus({
       publisherName: randomUUID(),
@@ -230,14 +241,54 @@ describe("perishDeadOutboxes", () => {
 
     await bus.publish(eventName, { keep: true });
     await new Promise((r) => setTimeout(r, 100));
-    bus.perishDeadOutboxes();
 
+    // Set status to DEAD with current timestamp
+    const now = new Date().toISOString();
     const db = new DatabaseSync(dbPath);
-    const row = db
+    db.exec(
+      `UPDATE Outbox SET status = 'DEAD', updatedAt = '${now}' WHERE eventName = '${eventName}'`,
+    );
+    db.close();
+
+    bus.perishDeadOutboxes(7); // delete DEAD events older than 7 days
+
+    const db2 = new DatabaseSync(dbPath);
+    const row = db2
+      .prepare("SELECT status FROM Outbox WHERE eventName = ?")
+      .get(eventName) as Record<string, string>;
+    db2.close();
+    assert.equal(row.status, "DEAD"); // still there, too recent
+
+    await bus.tryClose();
+  });
+
+  it("pass 0 to delete all DEAD events regardless of age", async () => {
+    const dbPath = tmpDbPath();
+    const bus = await createPersistentBus({
+      publisherName: randomUUID(),
+      redisUrl: REDIS_URL,
+      sqlitePath: dbPath,
+    });
+    const eventName = randomEventName();
+
+    await bus.publish(eventName, { purge: true });
+    await new Promise((r) => setTimeout(r, 100));
+
+    // Set status to DEAD
+    const db = new DatabaseSync(dbPath);
+    db.exec(
+      `UPDATE Outbox SET status = 'DEAD' WHERE eventName = '${eventName}'`,
+    );
+    db.close();
+
+    bus.perishDeadOutboxes(0); // delete all DEAD events
+
+    const db2 = new DatabaseSync(dbPath);
+    const row = db2
       .prepare("SELECT COUNT(*) AS cnt FROM Outbox WHERE eventName = ?")
       .get(eventName) as Record<string, number>;
-    db.close();
-    assert.equal(row.cnt, 1);
+    db2.close();
+    assert.equal(row.cnt, 0);
 
     await bus.tryClose();
   });

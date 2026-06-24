@@ -12,7 +12,8 @@ export type SqlName =
   | "decrementRetry"
   | "updateDead"
   | "selectDeadOutboxes"
-  | "deleteDeadOutboxes";
+  | "deleteDeadOutboxes"
+  | "deleteDeadOutboxesOlderThan";
 
 /** Parse `-- name: <key>` annotated SQL into a typed map. */
 function parseSqlStatements(raw: string): Map<string, string> {

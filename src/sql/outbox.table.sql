@@ -72,10 +72,16 @@ WHERE eventId = ?;
 SELECT *
 FROM Outbox
 WHERE publishedBy = ?
-  AND retries >= ?
-  AND status != 'DEAD';
+  AND status = 'DEAD'
+ORDER BY updatedAt ASC;
 
 -- name: deleteDeadOutboxes
 DELETE FROM Outbox
 WHERE publishedBy = ?
-  AND retries >= ?;
+  AND status = 'DEAD';
+
+-- name: deleteDeadOutboxesOlderThan
+DELETE FROM Outbox
+WHERE publishedBy = ?
+  AND status = 'DEAD'
+  AND updatedAt < ?;

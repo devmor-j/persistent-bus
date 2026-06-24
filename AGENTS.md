@@ -20,35 +20,34 @@ This is a Node.js library called `persistent-bus` that implements a typed, resil
 ## Key Components
 
 - **Broker**: Handles Redis pub/sub operations using the `redis` library.
-- **SQLite**: Manages persistence using the native Node.js `sqlite3` driver.
+- **SQLite**: Manages persistence using native `node:sqlite` (DatabaseSync).
 - **Service**: Implements the core persistent bus logic (outbox pattern).
-- **Utils**: Contains utility functions for retries, delays, and error handling.
+- **Utils**: Utility functions for retries, delays, and error handling.
 
 ## Architecture and Control Flow
 
 1. **Publishing**:
-   - Events are first stored in SQLite via the `createOutbox` function (the "Outbox").
-   - Events are then published to Redis pub/sub.
-   - If the initial publication fails, a `setTimeout` with exponential backoff is scheduled to retry the publication.
+   - Event is stored in SQLite as a `PENDING` outbox row, then a `setTimeout(retryIfPending, pendingDelayMs).unref()` is scheduled as a safety net (checks if event is still `PENDING` later and retries).
+   - Initial publish to Redis happens immediately after.
+   - `retryIfPending`: if event is still `PENDING` when triggered, increments retries and re-publishes. If retries exceed `maxRetries`, marks event `DEAD` ("retry:dead"). On publish failure, **decrements** retries (undo).
 2. **Subscribing**:
-   - Subscribers receive messages from Redis and are immediately marked as `PROCESSING` in SQLite.
-   - Upon successful processing, they are marked `COMPLETED`.
-   - On failure, the system calculates a retry delay and schedules a re-publication to Redis.
-3. **Recall Mechanism**:
-   - `recallOutgoingOutboxes` — retries publishing for all ongoing outboxes not yet at the retry limit.
-   - `recallDeadOutboxes` — marks outboxes that have hit the retry limit as `DEAD`.
-   - `perishDeadOutboxes` — permanently deletes outboxes that have hit the retry limit from SQLite.
-   - These three functions can be called programmatically at any time (e.g., on startup or on a cron schedule).
+   - Subscriber receives from Redis → marks `PROCESSING` → runs handler → marks `COMPLETED`.
+   - On handler failure: if `retries > maxRetries`, marks `DEAD` with error message. Otherwise increments retries and schedules a re-publish with exponential backoff.
+   - **Foreign event handling**: If the received event has no matching row in this bus's SQLite (published by another instance), the error is silently swallowed.
+3. **Recall API**:
+   - `recallOutgoingOutboxes()` — iterates all non-`COMPLETED`/`DEAD` events for this publisher. Skips those at `>= maxRetries`. Pre-increments retries, publishes, decrements on failure. Sleeps `recallIntervalMs` between each.
+   - `recallDeadOutboxes()` — re-publishes `DEAD` events. Does NOT change status or retries regardless of outcome. Sleeps `recallIntervalMs` between each.
+   - `perishDeadOutboxes(maxAgeDays = 7)` — deletes `DEAD` events older than `maxAgeDays`. Pass `0` to delete all `DEAD` events regardless of age.
+   - All recall functions filter by `publisherName` — each bus instance only sees its own events.
 4. **Dead Lettering**:
-   - Messages that exceed `DEAD_RETRY` (10) attempts are marked as `DEAD` to prevent infinite retry loops.
-   - `recallDeadOutboxes` and `perishDeadOutboxes` are the two ways to handle dead events: mark them for inspection or purge them entirely.
+   - Events whose retries exceed `maxRetries` (default 10) are marked `DEAD`. Statuses: `PENDING` → `PROCESSING` → `COMPLETED` or `DEAD`.
 
 ## Essential Commands
 
-- `npm run build` - Compiles the project using `tsdown`.
-- `npm run dev` - Runs the development `sample.ts`.
-- `npm run test` - Runs the `test.sh` and generates coverage svg.
-- `npm run prettier` - Formats repo using `prettier`.
+- `npm run build` — Compile via tsdown (outputs `dist/main.mjs`, `dist/main.cjs`, types).
+- `npm run dev` — Build then run `sample.ts` (integration test requiring Redis/SQLite).
+- `npm test` — Build then run `node --test` with coverage (`scripts/test.sh`). Tests import from `dist/main.mjs`, so build must run first.
+- `npm run prettier` — Format with Prettier (includes `prettier-plugin-organize-imports`).
 
 ## Version Targets
 
@@ -61,20 +60,20 @@ This is a Node.js library called `persistent-bus` that implements a typed, resil
 
 ## Code Organization
 
-- `src/` - Source code
-  - `main.ts` - Entry point with exports.
-  - `broker/` - Redis pub/sub and `EventEnvelope` definitions.
-  - `service/` - Core persistent bus logic, including SQLite prepared statements.
-  - `utils/` - Utility functions (retries, sleep, etc.).
-- `test/` - Test files (sample.ts for example usage).
+- `src/broker/` — Redis pub/sub setup (two clients) and `EventEnvelope` type.
+- `src/service/bus.ts` — `createPersistentBus`: core logic, prepared statements, publish/subscribe/recall.
+- `src/db.ts` — SQLite singleton (cached by path via `Map`), enables WAL mode.
+- `src/sql/` — SQL in `.sql` file with `-- name:` annotations, parsed at runtime by `statements.ts`.
+- `src/utils/utility.ts` — `sleep`, `calculateRetryDelay` (exponential backoff with jitter), `errorToString`.
+- `test/` — Tests use `node:test` (describe/it) and `node:assert/strict`. Common utilities in `test/utils.ts`.
 
 ## Naming Conventions and Style Patterns
 
-- **TypeScript**: Strong typing with generics for publisher and subscriber events.
-- **ESM**: The project uses Node.js ECMAScript Modules (`"type": "module"`).
-- **Event Envelopes**: All events carry metadata: `eventName`, `eventId`, `publishedBy`, `publishedAt`, and `payload`.
-- **Retry Logic**: Uses exponential backoff with `setTimeout(...).unref()` to avoid blocking process exit.
-- **Graceful Shutdown**: Handles `SIGINT` and `SIGTERM` via `tryClose` to ensure Redis connections are closed cleanly.
+- **Generics**: `createPersistentBus<PublisherEvents, SubscriberEvents>` for type-safe publish/subscribe.
+- **ESM**: `"type": "module"`, imports use `.ts` extensions, `verbatimModuleSyntax`.
+- **Envelopes**: `EventEnvelope<N, P>` with `eventName`, `eventId`, `publishedBy`, `publishedAt`, `payload`.
+- **Retries**: Exponential backoff with jitter. All `setTimeout` calls use `.unref()`.
+- **Graceful Shutdown**: `tryClose` handles `SIGINT`/`SIGTERM`, idempotent via `isClosing` guard.
 
 ## Commit Rules
 
@@ -83,13 +82,13 @@ This is a Node.js library called `persistent-bus` that implements a typed, resil
 
 ## Important Gotchas
 
-1. **Generic Constraints**: `createPersistentBus` requires type parameters for `PublisherEvents` and `SubscriberEvents` to ensure type safety across the bus.
-2. **Prepared Statements**: SQLite statements are compiled once during `createPersistentBus` initialization for performance.
-3. **Timeout Unref**: Use `.unref()` on all `setTimeout` calls to prevent the Node.js event loop from staying active indefinitely.
-4. **Database Driver**: Uses the native `sqlite3` driver; ensure the SQLite library is available in the environment.
-5. **Node.js Version**: Requires Node.js >= 22.5.
-6. **Concurrency**: SQLite is used for state tracking; be mindful of write contention if high concurrency is expected.
-7. **Constants**:
-   - `DEAD_RETRY`: 10 attempts.
-   - `PENDING_DELAY`: Initial delay before first retry.
-   - `RECALL_SLEEP`: Delay between sequential recall attempts.
+1. **Generic Constraints**: `createPersistentBus` requires both type params (`PublisherEvents`, `SubscriberEvents`) — these type-check `publish` and `subscribe` calls.
+2. **Prepared Statements**: All SQLite statements compiled once at init — changing SQL requires recompilation.
+3. **Timeout Unref**: All `setTimeout` calls use `.unref()` to not block process exit. Don't omit this.
+4. **Database Driver**: Uses native `node:sqlite` (`DatabaseSync`), NOT the npm `sqlite3` package.
+5. **Node.js >= 22.5**: Required for `node:sqlite`.
+6. **DB Singleton**: `createSqliteDb` caches connections by path in a `Map` — same path returns same connection.
+7. **SQL Annotation System**: SQL files are loaded as text by tsdown's `loader: { ".sql": "text" }` and parsed via `-- name:` annotations in `statements.ts`.
+8. **Retries comparison differs**: `recallOutgoingOutboxes` uses `>= maxRetries` to skip, subscriber catch block uses `> maxRetries` to dead-letter.
+9. **publisherName isolation**: All recall/perish queries filter by `publisherName`. Each bus instance in the same SQLite DB only sees events it created.
+10. **Configurable options** (with defaults): `maxRetries: 10`, `pendingDelayMs: 10_000`, `recallIntervalMs: 200`.

@@ -26,34 +26,6 @@ export function calculateRetryDelay(
   return delay * (1 + jitter * Math.random());
 }
 
-export async function withRetry<T>(
-  fn: () => Promise<T>,
-  options: {
-    retries?: number;
-    maxDelay?: number;
-  } = {},
-): Promise<T> {
-  const { retries = 5, maxDelay = 30_000 } = options;
-
-  let lastError: unknown;
-
-  for (let i = 0; i < retries; i++) {
-    try {
-      return await fn();
-    } catch (err) {
-      lastError = err;
-
-      if (i < retries - 1) {
-        await new Promise((resolve) =>
-          setTimeout(resolve, calculateRetryDelay(i, { maxDelay })),
-        );
-      }
-    }
-  }
-
-  throw lastError;
-}
-
 export function errorToString(error: unknown): string {
   if (!error) return "none";
 
@@ -84,21 +56,4 @@ export function errorToString(error: unknown): string {
   }
 
   return String(error);
-}
-
-export interface DeferredPromise<T = unknown> {
-  promise: Promise<T>;
-  resolve: (value: T | PromiseLike<T>) => void;
-  reject: (reason?: unknown) => void;
-}
-
-export function createDeferred<T = unknown>() {
-  const deferred = {} as DeferredPromise<T>;
-
-  deferred.promise = new Promise((resolve, reject) => {
-    deferred.resolve = resolve;
-    deferred.reject = reject;
-  }) as Promise<T>;
-
-  return deferred;
 }

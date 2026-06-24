@@ -17,23 +17,6 @@ export interface OutboxRow {
   error: string | null;
 }
 
-export interface OutboxInsert {
-  id: string;
-  createdAt: string;
-  updatedAt: string;
-  eventName: string;
-  eventId: string;
-  publishedBy: string;
-  publishedAt: string;
-  payload: string;
-  data: string;
-}
-
 export interface RetriesResult {
   retries: number;
-}
-
-export interface StatementRunResult {
-  changes: number;
-  lastInsertRowid: number | bigint;
 }
