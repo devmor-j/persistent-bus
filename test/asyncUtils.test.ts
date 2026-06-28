@@ -1,9 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import {
-  calculateRetryDelay,
-  sleep,
-} from "../src/utils/utility.ts";
+import { calculateRetryDelay, sleep } from "../src/utils/utility.ts";
 
 describe("calculateRetryDelay", () => {
   it("returns a value within expected range", () => {

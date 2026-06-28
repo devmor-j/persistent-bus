@@ -159,14 +159,14 @@ await bus.perishDeadOutboxes();
 Creates a bus instance. Two type parameters let you optionally constrain
 published and subscribed events differently.
 
-| Option | Type | Default | Description |
-|---|---|---|---|
-| `publisherName` | `string` | — | Logical name scoping this publisher's events |
-| `redisUrl` | `string` | — | Redis connection URL |
-| `sqlitePath` | `string` | — | Path to the SQLite database file |
-| `maxRetries` | `number` | `10` | Max retry attempts before marking an event `DEAD` |
-| `pendingDelayMs` | `number` | `10_000` | Delay in ms before first pending-retry check |
-| `recallIntervalMs` | `number` | `200` | Delay in ms between individual recall publishes |
+| Option             | Type     | Default  | Description                                       |
+| ------------------ | -------- | -------- | ------------------------------------------------- |
+| `publisherName`    | `string` | —        | Logical name scoping this publisher's events      |
+| `redisUrl`         | `string` | —        | Redis connection URL                              |
+| `sqlitePath`       | `string` | —        | Path to the SQLite database file                  |
+| `maxRetries`       | `number` | `10`     | Max retry attempts before marking an event `DEAD` |
+| `pendingDelayMs`   | `number` | `10_000` | Delay in ms before first pending-retry check      |
+| `recallIntervalMs` | `number` | `200`    | Delay in ms between individual recall publishes   |
 
 Returns a bus instance with the following methods:
 
@@ -249,10 +249,42 @@ jitter, capped at 60 seconds.
 
 ---
 
-## 🔗 Links
+## ⚖️ How does it compare?
 
-- [GitHub](https://github.com/devmor-j/persistent-bus)
-- [Issues](https://github.com/devmor-j/persistent-bus/issues)
+**Redis pub/sub** drops messages on restart. **Redis Streams** fixes that but adds
+consumer groups, pending-entry lists, and a dozen other primitives you don't need
+for simple event broadcasting.
+
+`persistent-bus` is the middle ground: Redis pub/sub with **just enough** reliability
+via a lightweight SQLite outbox. No stream configs, no extra daemons.
+
+| Feature               | 🚌 persistent-bus                            | 📦 Redis Streams             | 🐇 RabbitMQ             | 🚀 Kafka          |
+| --------------------- | -------------------------------------------- | ---------------------------- | ----------------------- | ----------------- |
+| **Crash-proof**       | ✅ SQLite outbox — saved _before_ Redis      | ⚠️ AOF/RDB — can lose writes | ✅ Durable queues       | ✅ Replicated log |
+| **TypeScript safety** | ✅ Generics — compile-time checked           | ❌                           | ❌                      | ❌                |
+| **DLQ + auto retry**  | ✅ Built-in with backoff                     | ❌ Manual                    | ✅ DLX + TTL            | ❌ Manual         |
+| **Recall API**        | ✅ Re-publish all uncompleted or dead events | ❌ Manual replay             | ❌ Manual               | ❌ Offset reset   |
+| **Complex routing**   | ❌ Simple pub/sub                            | ❌                           | ✅ Topic/fanout/headers | ❌ Topic-only     |
+| **Ordering**          | ❌                                           | ✅ Per stream                | ✅ Per queue            | ✅ Per partition  |
+| **Throughput**        | Moderate                                     | ~200K msg/s                  | ~30K msg/s              | Millions/sec      |
+
+### When to pick persistent-bus
+
+- **You run Redis** but need crash-proof delivery — pub/sub loses messages on restart.
+- **Zero ops overhead** — no ZooKeeper, Erlang, or separate broker.
+- **Type safety matters** — mismatched event contracts are a compiler error.
+- **You need recall** — re-publish everything that isn't done with one call.
+
+### When to look elsewhere
+
+| You need...                               | Pick this            |
+| ----------------------------------------- | -------------------- |
+| Complex routing (topic exchanges, fanout) | **RabbitMQ**         |
+| Millions of events/sec, event sourcing    | **Kafka**            |
+| Exactly-once FIFO, managed infra          | **SQS**              |
+| Delayed/cron jobs, job queues             | **BullMQ**           |
+| Sub-ms latency at edge scale              | **NATS + JetStream** |
+| Built-in consumer groups                  | **Redis Streams**    |
 
 ---
 
