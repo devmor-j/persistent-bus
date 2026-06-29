@@ -7,6 +7,8 @@ import { createClient } from "redis";
 export const TMP_DIR = "./tmp/test";
 export const DEAD_RETRY = 10;
 
+const { REDIS_URL } = process.env;
+
 await mkdir(TMP_DIR, { recursive: true });
 
 export interface CreateTmpDbOptions {
@@ -85,11 +87,10 @@ export interface RedisPubSub {
 }
 
 /** Create a PubSub from two Redis clients (publisher + subscriber). */
-export async function createRedisClient(): Promise<RedisPubSub> {
-  const { REDIS_URL } = process.env;
+export async function createRedisPubSub(url = REDIS_URL): Promise<RedisPubSub> {
   const [publisher, subscriber] = await Promise.all([
-    createClient({ url: REDIS_URL }).connect(),
-    createClient({ url: REDIS_URL }).connect(),
+    createClient({ url }).connect(),
+    createClient({ url }).connect(),
   ]);
 
   let isClosing = false;
@@ -97,15 +98,23 @@ export async function createRedisClient(): Promise<RedisPubSub> {
   const tryClose = async () => {
     if (isClosing) return;
     isClosing = true;
+
     process.off("SIGINT", tryClose);
     process.off("SIGTERM", tryClose);
-    await Promise.allSettled([publisher.close(), subscriber.close()]);
+
+    await Promise.race([
+      Promise.allSettled([publisher.close(), subscriber.close()]),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("Close timeout")), 10_000),
+      ),
+    ]);
   };
 
   process.on("SIGINT", tryClose);
   process.on("SIGTERM", tryClose);
 
   return {
+    // redis methods lose `this` when destructured; .bind() preserves context
     publish: publisher.publish.bind(publisher),
     subscribe: subscriber.subscribe.bind(subscriber),
     tryClose,

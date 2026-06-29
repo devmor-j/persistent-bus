@@ -22,10 +22,13 @@ export type EventPayloadMap<T extends Record<string, Handler<string, any>>> = {
  * interface works. The instance must already be connected.
  */
 export interface PubSub {
-  publish(channel: string, message: string): Promise<number>;
-  subscribe(
+  publish?(channel: string, message: string): Promise<number>;
+  subscribe?(
     channel: string,
     listener: (message: string) => void,
   ): Promise<void> | void;
-  tryClose(): Promise<void>;
+  tryClose?(): Promise<void>;
 }
+
+export type Publisher = Pick<PubSub, "publish" | "tryClose">;
+export type Subscriber = Pick<PubSub, "subscribe" | "tryClose">;

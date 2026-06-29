@@ -3,13 +3,13 @@ import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 import { createPersistentBus } from "../dist/main.mjs";
-import { createRedisClient, randomEventName, useTmpDir } from "./utils.ts";
+import { createRedisPubSub, randomEventName, useTmpDir } from "./utils.ts";
 
 const { tmpDbPath } = useTmpDir();
 
 describe("event envelope", () => {
   it("produces correct envelope fields", async () => {
-    const pubsub = await createRedisClient();
+    const pubsub = await createRedisPubSub();
     const bus = createPersistentBus<
       Record<string, unknown>,
       Record<string, unknown>
@@ -49,7 +49,7 @@ describe("event envelope", () => {
 
 describe("publish and subscribe", () => {
   it("happy path: subscriber receives published event", async () => {
-    const pubsub = await createRedisClient();
+    const pubsub = await createRedisPubSub();
     const bus = createPersistentBus({
       publisherName: randomUUID(),
       pubsub,
@@ -75,7 +75,7 @@ describe("publish and subscribe", () => {
   });
 
   it("delivers multiple event types correctly", async () => {
-    const pubsub = await createRedisClient();
+    const pubsub = await createRedisPubSub();
     const bus = createPersistentBus({
       publisherName: randomUUID(),
       pubsub,
@@ -86,8 +86,12 @@ describe("publish and subscribe", () => {
     const receivedA: unknown[] = [];
     const receivedB: unknown[] = [];
 
-    bus.subscribe(evtA, async (env) => receivedA.push(env.payload));
-    bus.subscribe(evtB, async (env) => receivedB.push(env.payload));
+    bus.subscribe(evtA, async (env) => {
+      receivedA.push(env.payload);
+    });
+    bus.subscribe(evtB, async (env) => {
+      receivedB.push(env.payload);
+    });
 
     await new Promise((r) => setTimeout(r, 200));
     await bus.publish(evtA, { letter: "A" });
@@ -107,7 +111,7 @@ describe("publish and subscribe", () => {
 
 describe("subscriber handler success", () => {
   it("marks event COMPLETED after successful handler", async () => {
-    const pubsub = await createRedisClient();
+    const pubsub = await createRedisPubSub();
     const dbPath = tmpDbPath();
     const bus = createPersistentBus({
       publisherName: randomUUID(),
@@ -140,7 +144,7 @@ describe("subscriber handler success", () => {
 
 describe("status transition lifecycle", () => {
   it("follows PENDING → PROCESSING → COMPLETED on success", async () => {
-    const pubsub = await createRedisClient();
+    const pubsub = await createRedisPubSub();
     const dbPath = tmpDbPath();
     const bus = createPersistentBus({
       publisherName: randomUUID(),
@@ -178,8 +182,8 @@ describe("status transition lifecycle", () => {
 
 describe("publisher isolation", () => {
   it("recallOutgoingOutboxes only operates on own publisher's events", async () => {
-    const pubsubA = await createRedisClient();
-    const pubsubB = await createRedisClient();
+    const pubsubA = await createRedisPubSub();
+    const pubsubB = await createRedisPubSub();
     const dbPathA = tmpDbPath();
     const dbPathB = tmpDbPath();
     const busA = createPersistentBus({
@@ -224,7 +228,7 @@ describe("publisher isolation", () => {
 
 describe("concurrent events", () => {
   it("delivers multiple rapidly-published events", async () => {
-    const pubsub = await createRedisClient();
+    const pubsub = await createRedisPubSub();
     const dbPath = tmpDbPath();
     const bus = createPersistentBus({
       publisherName: randomUUID(),
@@ -235,7 +239,9 @@ describe("concurrent events", () => {
     const received: unknown[] = [];
     const COUNT = 20;
 
-    bus.subscribe(eventName, async (env) => received.push(env.payload));
+    bus.subscribe(eventName, async (env) => {
+      received.push(env.payload);
+    });
 
     await new Promise((r) => setTimeout(r, 200));
 
@@ -263,8 +269,8 @@ describe("concurrent events", () => {
 
 describe("foreign event handling", () => {
   it("subscriber gracefully handles failure for events not in own outbox", async () => {
-    const pubsubA = await createRedisClient();
-    const pubsubB = await createRedisClient();
+    const pubsubA = await createRedisPubSub();
+    const pubsubB = await createRedisPubSub();
     const dbPathB = tmpDbPath();
     const busA = createPersistentBus({
       publisherName: randomUUID(),

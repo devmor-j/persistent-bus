@@ -5,7 +5,7 @@ import { describe, it } from "node:test";
 import { createPersistentBus } from "../dist/main.mjs";
 import { sleep } from "../src/utils/utility.ts";
 import {
-  createRedisClient,
+  createRedisPubSub,
   DEAD_RETRY,
   randomEventName,
   useTmpDir,
@@ -15,7 +15,7 @@ const { tmpDbPath } = useTmpDir();
 
 describe("subscriber failure and dead lettering", () => {
   it("marks DEAD when subscriber throws with retries above threshold", async () => {
-    const pubsub = await createRedisClient();
+    const pubsub = await createRedisPubSub();
     const dbPath = tmpDbPath();
     const bus = createPersistentBus({
       publisherName: randomUUID(),
@@ -59,7 +59,7 @@ describe("subscriber failure and dead lettering", () => {
 
 describe("retry decrement on publish failure", () => {
   it("decrements retry when pubsub.publish throws in recall", async () => {
-    const pubsub = await createRedisClient();
+    const pubsub = await createRedisPubSub();
     const dbPath = tmpDbPath();
     const bus = createPersistentBus({
       publisherName: "decrement-test",
@@ -90,7 +90,7 @@ describe("retry decrement on publish failure", () => {
 
 describe("subscriber retry scheduling", () => {
   it("retries subscriber handler on failure then succeeds on retry", async () => {
-    const pubsub = await createRedisClient();
+    const pubsub = await createRedisPubSub();
     const dbPath = tmpDbPath();
     const bus = createPersistentBus({
       publisherName: "retry-sched",
@@ -128,7 +128,7 @@ describe("subscriber retry scheduling", () => {
 
 describe("recallDeadOutboxes publish failure", () => {
   it("handles publish failure gracefully and keeps event DEAD", async () => {
-    const pubsub = await createRedisClient();
+    const pubsub = await createRedisPubSub();
     const dbPath = tmpDbPath();
     const bus = createPersistentBus({
       publisherName: "dead-fail",

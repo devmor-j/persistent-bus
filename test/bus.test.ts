@@ -4,13 +4,13 @@ import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 import { createPersistentBus } from "../dist/main.mjs";
 import { sleep } from "../src/utils/utility.ts";
-import { createRedisClient, randomEventName, useTmpDir } from "./utils.ts";
+import { createRedisPubSub, randomEventName, useTmpDir } from "./utils.ts";
 
 const { tmpDbPath } = useTmpDir();
 
 describe("createPersistentBus", () => {
   it("returns an object with all expected methods", async () => {
-    const pubsub = await createRedisClient();
+    const pubsub = await createRedisPubSub();
     const bus = createPersistentBus<
       Record<string, unknown>,
       Record<string, unknown>
@@ -31,7 +31,7 @@ describe("createPersistentBus", () => {
   });
 
   it("creates the Outbox table on init", async () => {
-    const pubsub = await createRedisClient();
+    const pubsub = await createRedisPubSub();
     const dbPath = tmpDbPath();
     const bus = createPersistentBus({
       publisherName: randomUUID(),
@@ -52,7 +52,7 @@ describe("createPersistentBus", () => {
   });
 
   it("retryIfPending re-publishes event still in PENDING state", async () => {
-    const pubsub = await createRedisClient();
+    const pubsub = await createRedisPubSub();
     const dbPath = tmpDbPath();
     const bus = createPersistentBus({
       publisherName: randomUUID(),
@@ -79,7 +79,7 @@ describe("createPersistentBus", () => {
   });
 
   it("recall on empty outbox does not throw", async () => {
-    const pubsub = await createRedisClient();
+    const pubsub = await createRedisPubSub();
     const bus = createPersistentBus({
       publisherName: randomUUID(),
       pubsub,
@@ -93,7 +93,7 @@ describe("createPersistentBus", () => {
   });
 
   it("retryIfPending marks DEAD when retries exceed maxRetries", async () => {
-    const pubsub = await createRedisClient();
+    const pubsub = await createRedisPubSub();
     const dbPath = tmpDbPath();
     const bus = createPersistentBus({
       publisherName: randomUUID(),
@@ -128,7 +128,7 @@ describe("createPersistentBus", () => {
 
 describe("tryClose", () => {
   it("closes pubsub connections", async () => {
-    const pubsub = await createRedisClient();
+    const pubsub = await createRedisPubSub();
     const bus = createPersistentBus({
       publisherName: randomUUID(),
       pubsub,
@@ -142,7 +142,7 @@ describe("tryClose", () => {
   });
 
   it("is idempotent — calling twice does not throw", async () => {
-    const pubsub = await createRedisClient();
+    const pubsub = await createRedisPubSub();
     const bus = createPersistentBus({
       publisherName: randomUUID(),
       pubsub,

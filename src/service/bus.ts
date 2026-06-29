@@ -5,10 +5,28 @@ import type { OutboxRow, RetriesResult } from "../db.types.ts";
 import { getSql } from "../sql/statements.ts";
 import { calculateRetryDelay, errorToString, sleep } from "../utils/utility.ts";
 
+function assertPublisher(
+  pubsub: PubSub,
+): asserts pubsub is Required<Pick<PubSub, "publish">> {
+  if (!pubsub.publish)
+    throw new Error(
+      "persistent-bus: publish() called but no publisher configured. Provide a pubsub object with a publish method.",
+    );
+}
+
+function assertSubscriber(
+  pubsub: PubSub,
+): asserts pubsub is Required<Pick<PubSub, "subscribe">> {
+  if (!pubsub.subscribe)
+    throw new Error(
+      "persistent-bus: subscribe() called but no subscriber configured. Provide a pubsub object with a subscribe method.",
+    );
+}
+
 export interface PersistentBusOptions {
   publisherName: string;
-  pubsub: PubSub;
   sqlitePath: string;
+  pubsub: PubSub;
   /** Max retry attempts before marking an event DEAD (default: 10). */
   maxRetries?: number;
   /** Delay in ms before first pending retry check (default: 10_000). */
@@ -113,6 +131,7 @@ export function createPersistentBus<
     stmt.selectDeadOutboxes.all(publisherName) as unknown as OutboxRow[];
 
   const recallOutgoingOutboxes = async () => {
+    assertPublisher(pubsub);
     const ongoingOutboxEvents = findOngoingOutbox();
 
     for (const outboxEvent of ongoingOutboxEvents) {
@@ -131,6 +150,7 @@ export function createPersistentBus<
   };
 
   const recallDeadOutboxes = async () => {
+    assertPublisher(pubsub);
     const deadOutboxEvents = findDeadOutbox();
 
     for (const outboxEvent of deadOutboxEvents) {
@@ -156,6 +176,7 @@ export function createPersistentBus<
   };
 
   const createPublisher = async <N extends string, P>(event: N, payload: P) => {
+    assertPublisher(pubsub);
     const { eventId, data } = createOutbox(event, payload);
 
     const retryIfPending = async () => {
@@ -186,6 +207,7 @@ export function createPersistentBus<
     event: N,
     handler: (envelope: EventEnvelope<N, P>) => void | Promise<void>,
   ) => {
+    assertSubscriber(pubsub);
     pubsub.subscribe(event, async (data: string) => {
       const envelope = JSON.parse(data) as EventEnvelope<N, P>;
       const { eventId } = envelope;
@@ -210,10 +232,10 @@ export function createPersistentBus<
           const retryDelay = calculateRetryDelay(outboxEvent.retries, {
             maxRetries,
           });
-          setTimeout(
-            () => pubsub.publish(event, data).catch(() => {}),
-            retryDelay,
-          ).unref();
+          setTimeout(() => {
+            assertPublisher(pubsub);
+            pubsub.publish(event, data).catch(() => {});
+          }, retryDelay).unref();
         }
       }
     });
@@ -237,6 +259,6 @@ export function createPersistentBus<
     recallOutgoingOutboxes,
     recallDeadOutboxes,
     perishDeadOutboxes,
-    tryClose: pubsub.tryClose,
+    tryClose: () => pubsub.tryClose?.() ?? Promise.resolve(),
   };
 }

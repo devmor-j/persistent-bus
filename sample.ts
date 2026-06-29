@@ -1,6 +1,9 @@
 import "@dotenvx/dotenvx/config";
-import { createPersistentBus, type PersistentBusOptions } from "./dist/main.mjs";
-import { createRedisClient } from "./test/utils.ts";
+import {
+  createPersistentBus,
+  type PersistentBusOptions,
+} from "./dist/main.mjs";
+import { createRedisPubSub } from "./test/utils.ts";
 
 const { SQLITE_PATH } = process.env;
 
@@ -23,12 +26,12 @@ type SubscribeEvents = {
 };
 
 async function sample() {
-  const pubsub = await createRedisClient();
+  const pubsub = await createRedisPubSub();
 
   const options = {
     publisherName: "sample",
-    pubsub,
     sqlitePath: SQLITE_PATH,
+    pubsub,
   } as const satisfies PersistentBusOptions;
 
   const { publish, subscribe } = createPersistentBus<

@@ -3,13 +3,13 @@ import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 import { createPersistentBus } from "../dist/main.mjs";
-import { createRedisClient, randomEventName, useTmpDir } from "./utils.ts";
+import { createRedisPubSub, randomEventName, useTmpDir } from "./utils.ts";
 
 const { tmpDbPath } = useTmpDir();
 
 describe("database persistence", () => {
   it("stores row with correct fields after publish", async () => {
-    const pubsub = await createRedisClient();
+    const pubsub = await createRedisPubSub();
     const dbPath = tmpDbPath();
     const bus = createPersistentBus({
       publisherName: "db-test",
@@ -46,7 +46,7 @@ describe("database persistence", () => {
   });
 
   it("transitions status: PENDING -> PROCESSING -> COMPLETED", async () => {
-    const pubsub = await createRedisClient();
+    const pubsub = await createRedisPubSub();
     const dbPath = tmpDbPath();
     const bus = createPersistentBus({
       publisherName: randomUUID(),
@@ -71,7 +71,7 @@ describe("database persistence", () => {
   });
 
   it("stores payload as JSON", async () => {
-    const pubsub = await createRedisClient();
+    const pubsub = await createRedisPubSub();
     const dbPath = tmpDbPath();
     const bus = createPersistentBus({
       publisherName: randomUUID(),
