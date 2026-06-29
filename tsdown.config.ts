@@ -11,7 +11,4 @@ export default defineConfig({
   loader: {
     ".sql": "text",
   },
-  deps: {
-    neverBundle: ["redis"],
-  },
 });

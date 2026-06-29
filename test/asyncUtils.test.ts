@@ -37,4 +37,15 @@ describe("sleep", () => {
     await sleep(50);
     assert.ok(Date.now() - start >= 40);
   });
+
+  it("resolves immediately with duration 0", async () => {
+    const start = Date.now();
+    await sleep(0);
+    assert.ok(Date.now() - start < 50);
+  });
+
+  it("resolves with the duration value", async () => {
+    const result = await sleep(10);
+    assert.equal(result, 10);
+  });
 });

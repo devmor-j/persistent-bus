@@ -3,18 +3,17 @@ import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 import { createPersistentBus } from "../dist/main.mjs";
-import { randomEventName, useTmpDir } from "./utils.ts";
-
-const { REDIS_URL } = process.env;
+import { createRedisClient, randomEventName, useTmpDir } from "./utils.ts";
 
 const { tmpDbPath } = useTmpDir();
 
 describe("database persistence", () => {
   it("stores row with correct fields after publish", async () => {
+    const pubsub = await createRedisClient();
     const dbPath = tmpDbPath();
-    const bus = await createPersistentBus({
+    const bus = createPersistentBus({
       publisherName: "db-test",
-      redisUrl: REDIS_URL,
+      pubsub,
       sqlitePath: dbPath,
     });
     const eventName = randomEventName();
@@ -47,10 +46,11 @@ describe("database persistence", () => {
   });
 
   it("transitions status: PENDING -> PROCESSING -> COMPLETED", async () => {
+    const pubsub = await createRedisClient();
     const dbPath = tmpDbPath();
-    const bus = await createPersistentBus({
+    const bus = createPersistentBus({
       publisherName: randomUUID(),
-      redisUrl: REDIS_URL,
+      pubsub,
       sqlitePath: dbPath,
     });
     const eventName = randomEventName();
@@ -71,10 +71,11 @@ describe("database persistence", () => {
   });
 
   it("stores payload as JSON", async () => {
+    const pubsub = await createRedisClient();
     const dbPath = tmpDbPath();
-    const bus = await createPersistentBus({
+    const bus = createPersistentBus({
       publisherName: randomUUID(),
-      redisUrl: REDIS_URL,
+      pubsub,
       sqlitePath: dbPath,
     });
     const eventName = randomEventName();

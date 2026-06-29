@@ -47,4 +47,26 @@ describe("errorToString", () => {
   it("passes explicit string through", () => {
     assert.equal(errorToString("explicit"), "explicit");
   });
+
+  it("falls back to stack when Error has empty message", () => {
+    const err = new Error("");
+    // Error with empty message should fall back to stack
+    const result = errorToString(err);
+    assert.ok(result.length > 0);
+  });
+
+  it("converts Error with only message property via object path", () => {
+    const result = errorToString({ message: "custom" });
+    assert.equal(result, "custom");
+  });
+
+  it("handles error object with nested error property calling errorToString", () => {
+    const result = errorToString({ error: { message: "nested-deep" } });
+    assert.equal(result, "nested-deep");
+  });
+
+  it("stringifies objects without message or error property", () => {
+    const result = errorToString({ code: 500, reason: "fail" });
+    assert.equal(result, '{"code":500,"reason":"fail"}');
+  });
 });

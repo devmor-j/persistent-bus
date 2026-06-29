@@ -3,18 +3,22 @@ import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 import { createPersistentBus } from "../dist/main.mjs";
-import { DEAD_RETRY, randomEventName, useTmpDir } from "./utils.ts";
-
-const { REDIS_URL } = process.env;
+import {
+  createRedisClient,
+  DEAD_RETRY,
+  randomEventName,
+  useTmpDir,
+} from "./utils.ts";
 
 const { tmpDbPath } = useTmpDir();
 
 describe("recallOutgoingOutboxes", () => {
   it("re-publishes pending events and increments retries", async () => {
+    const pubsub = await createRedisClient();
     const dbPath = tmpDbPath();
-    const bus = await createPersistentBus({
+    const bus = createPersistentBus({
       publisherName: "recall-test",
-      redisUrl: REDIS_URL,
+      pubsub,
       sqlitePath: dbPath,
     });
     const eventName = randomEventName();
@@ -31,9 +35,10 @@ describe("recallOutgoingOutboxes", () => {
     assert.equal(row.status, "PENDING");
 
     // Subscribe on second bus to catch the re-publish
-    const bus2 = await createPersistentBus({
+    const pubsub2 = await createRedisClient();
+    const bus2 = createPersistentBus({
       publisherName: randomUUID(),
-      redisUrl: REDIS_URL,
+      pubsub: pubsub2,
       sqlitePath: tmpDbPath(),
     });
     const received: unknown[] = [];
@@ -53,13 +58,15 @@ describe("recallOutgoingOutboxes", () => {
 
     await bus.tryClose();
     await bus2.tryClose();
+    await pubsub2.tryClose();
   });
 
   it("skips events already at retry limit", async () => {
+    const pubsub = await createRedisClient();
     const dbPath = tmpDbPath();
-    const bus = await createPersistentBus({
+    const bus = createPersistentBus({
       publisherName: "recall-skip-test",
-      redisUrl: REDIS_URL,
+      pubsub,
       sqlitePath: dbPath,
     });
     const eventName = randomEventName();
@@ -88,10 +95,11 @@ describe("recallOutgoingOutboxes", () => {
 
 describe("recallDeadOutboxes", () => {
   it("re-publishes DEAD events to subscribers", async () => {
+    const pubsub = await createRedisClient();
     const dbPath = tmpDbPath();
-    const bus = await createPersistentBus({
+    const bus = createPersistentBus({
       publisherName: "dead-recall",
-      redisUrl: REDIS_URL,
+      pubsub,
       sqlitePath: dbPath,
     });
     const eventName = randomEventName();
@@ -107,9 +115,10 @@ describe("recallDeadOutboxes", () => {
     db.close();
 
     // Subscribe on second bus to catch the re-publish
-    const bus2 = await createPersistentBus({
+    const pubsub2 = await createRedisClient();
+    const bus2 = createPersistentBus({
       publisherName: randomUUID(),
-      redisUrl: REDIS_URL,
+      pubsub: pubsub2,
       sqlitePath: tmpDbPath(),
     });
     const received: unknown[] = [];
@@ -123,13 +132,15 @@ describe("recallDeadOutboxes", () => {
 
     await bus.tryClose();
     await bus2.tryClose();
+    await pubsub2.tryClose();
   });
 
   it("does not affect non-DEAD events", async () => {
+    const pubsub = await createRedisClient();
     const dbPath = tmpDbPath();
-    const bus = await createPersistentBus({
+    const bus = createPersistentBus({
       publisherName: randomUUID(),
-      redisUrl: REDIS_URL,
+      pubsub,
       sqlitePath: dbPath,
     });
     const eventName = randomEventName();
@@ -150,16 +161,18 @@ describe("recallDeadOutboxes", () => {
   });
 
   it("only processes own publisher's events", async () => {
+    const pubsubA = await createRedisClient();
+    const pubsubB = await createRedisClient();
     const dbPathA = tmpDbPath();
     const dbPathB = tmpDbPath();
-    const busA = await createPersistentBus({
+    const busA = createPersistentBus({
       publisherName: "dead-recall-iso-A",
-      redisUrl: REDIS_URL,
+      pubsub: pubsubA,
       sqlitePath: dbPathA,
     });
-    const busB = await createPersistentBus({
+    const busB = createPersistentBus({
       publisherName: "dead-recall-iso-B",
-      redisUrl: REDIS_URL,
+      pubsub: pubsubB,
       sqlitePath: dbPathB,
     });
     const evtA = randomEventName();
@@ -173,9 +186,10 @@ describe("recallDeadOutboxes", () => {
     db.close();
 
     // Listener bus catches any re-publish
-    const listener = await createPersistentBus({
+    const listenerPubSub = await createRedisClient();
+    const listener = createPersistentBus({
       publisherName: randomUUID(),
-      redisUrl: REDIS_URL,
+      pubsub: listenerPubSub,
       sqlitePath: tmpDbPath(),
     });
     const received: unknown[] = [];
@@ -195,15 +209,19 @@ describe("recallDeadOutboxes", () => {
     await busA.tryClose();
     await busB.tryClose();
     await listener.tryClose();
+    await pubsubA.tryClose();
+    await pubsubB.tryClose();
+    await listenerPubSub.tryClose();
   });
 });
 
 describe("perishDeadOutboxes", () => {
   it("deletes DEAD events older than maxAgeDays", async () => {
+    const pubsub = await createRedisClient();
     const dbPath = tmpDbPath();
-    const bus = await createPersistentBus({
+    const bus = createPersistentBus({
       publisherName: "perish-test",
-      redisUrl: REDIS_URL,
+      pubsub,
       sqlitePath: dbPath,
     });
     const eventName = randomEventName();
@@ -231,10 +249,11 @@ describe("perishDeadOutboxes", () => {
   });
 
   it("does not delete recent DEAD events", async () => {
+    const pubsub = await createRedisClient();
     const dbPath = tmpDbPath();
-    const bus = await createPersistentBus({
+    const bus = createPersistentBus({
       publisherName: randomUUID(),
-      redisUrl: REDIS_URL,
+      pubsub,
       sqlitePath: dbPath,
     });
     const eventName = randomEventName();
@@ -263,10 +282,11 @@ describe("perishDeadOutboxes", () => {
   });
 
   it("pass 0 to delete all DEAD events regardless of age", async () => {
+    const pubsub = await createRedisClient();
     const dbPath = tmpDbPath();
-    const bus = await createPersistentBus({
+    const bus = createPersistentBus({
       publisherName: randomUUID(),
-      redisUrl: REDIS_URL,
+      pubsub,
       sqlitePath: dbPath,
     });
     const eventName = randomEventName();
@@ -282,6 +302,38 @@ describe("perishDeadOutboxes", () => {
     db.close();
 
     bus.perishDeadOutboxes(0); // delete all DEAD events
+
+    const db2 = new DatabaseSync(dbPath);
+    const row = db2
+      .prepare("SELECT COUNT(*) AS cnt FROM Outbox WHERE eventName = ?")
+      .get(eventName) as Record<string, number>;
+    db2.close();
+    assert.equal(row.cnt, 0);
+
+    await bus.tryClose();
+  });
+
+  it("works with default maxAgeDays argument", async () => {
+    const pubsub = await createRedisClient();
+    const dbPath = tmpDbPath();
+    const bus = createPersistentBus({
+      publisherName: randomUUID(),
+      pubsub,
+      sqlitePath: dbPath,
+    });
+    const eventName = randomEventName();
+
+    await bus.publish(eventName, { x: 1 });
+    await new Promise((r) => setTimeout(r, 100));
+
+    // Set to DEAD with very old timestamp
+    const db = new DatabaseSync(dbPath);
+    db.exec(
+      `UPDATE Outbox SET status = 'DEAD', updatedAt = '2019-01-01T00:00:00.000Z' WHERE eventName = '${eventName}'`,
+    );
+    db.close();
+
+    bus.perishDeadOutboxes(); // default maxAgeDays = 7
 
     const db2 = new DatabaseSync(dbPath);
     const row = db2

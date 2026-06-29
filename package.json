@@ -11,6 +11,7 @@
   "devDependencies": {
     "@dotenvx/dotenvx": "~1.75.1",
     "@types/node": "~26.0.0",
+    "c8": "~11.0.0",
     "lcov-badge2": "~1.1.4",
     "prettier": "~3.8.4",
     "prettier-plugin-organize-imports": "~4.3.0",

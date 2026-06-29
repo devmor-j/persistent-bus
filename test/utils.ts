@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { after, before } from "node:test";
+import { createClient } from "redis";
 
 export const TMP_DIR = "./tmp/test";
 export const DEAD_RETRY = 10;
@@ -71,4 +72,42 @@ export function createDeferred<T = void>() {
     reject = rej;
   });
   return { promise, resolve, reject };
+}
+
+/** Minimal pub/sub interface matching what createPersistentBus expects. */
+export interface RedisPubSub {
+  publish(channel: string, message: string): Promise<number>;
+  subscribe(
+    channel: string,
+    listener: (message: string) => void,
+  ): Promise<void> | void;
+  tryClose(): Promise<void>;
+}
+
+/** Create a PubSub from two Redis clients (publisher + subscriber). */
+export async function createRedisClient(): Promise<RedisPubSub> {
+  const { REDIS_URL } = process.env;
+  const [publisher, subscriber] = await Promise.all([
+    createClient({ url: REDIS_URL }).connect(),
+    createClient({ url: REDIS_URL }).connect(),
+  ]);
+
+  let isClosing = false;
+
+  const tryClose = async () => {
+    if (isClosing) return;
+    isClosing = true;
+    process.off("SIGINT", tryClose);
+    process.off("SIGTERM", tryClose);
+    await Promise.allSettled([publisher.close(), subscriber.close()]);
+  };
+
+  process.on("SIGINT", tryClose);
+  process.on("SIGTERM", tryClose);
+
+  return {
+    publish: publisher.publish.bind(publisher),
+    subscribe: subscriber.subscribe.bind(subscriber),
+    tryClose,
+  };
 }

@@ -3,20 +3,20 @@ import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 import { createPersistentBus } from "../dist/main.mjs";
-import { useTmpDir } from "./utils.ts";
-
-const { REDIS_URL } = process.env;
+import { sleep } from "../src/utils/utility.ts";
+import { createRedisClient, randomEventName, useTmpDir } from "./utils.ts";
 
 const { tmpDbPath } = useTmpDir();
 
 describe("createPersistentBus", () => {
   it("returns an object with all expected methods", async () => {
-    const bus = await createPersistentBus<
+    const pubsub = await createRedisClient();
+    const bus = createPersistentBus<
       Record<string, unknown>,
       Record<string, unknown>
     >({
       publisherName: randomUUID(),
-      redisUrl: REDIS_URL,
+      pubsub,
       sqlitePath: tmpDbPath(),
     });
 
@@ -30,23 +30,12 @@ describe("createPersistentBus", () => {
     await bus.tryClose();
   });
 
-  it("rejects when given an invalid redis URL", async () => {
-    await assert.rejects(
-      () =>
-        createPersistentBus({
-          publisherName: "test",
-          redisUrl: "redis://nonexistent:9999",
-          sqlitePath: tmpDbPath(),
-        }),
-      /connect|ECONNREFUSED|connection|refused|ENOTFOUND/i,
-    );
-  });
-
   it("creates the Outbox table on init", async () => {
+    const pubsub = await createRedisClient();
     const dbPath = tmpDbPath();
-    const bus = await createPersistentBus({
+    const bus = createPersistentBus({
       publisherName: randomUUID(),
-      redisUrl: REDIS_URL,
+      pubsub,
       sqlitePath: dbPath,
     });
 
@@ -61,13 +50,88 @@ describe("createPersistentBus", () => {
 
     await bus.tryClose();
   });
+
+  it("retryIfPending re-publishes event still in PENDING state", async () => {
+    const pubsub = await createRedisClient();
+    const dbPath = tmpDbPath();
+    const bus = createPersistentBus({
+      publisherName: randomUUID(),
+      pubsub,
+      sqlitePath: dbPath,
+      pendingDelayMs: 100,
+    });
+    const eventName = randomEventName();
+
+    // No subscriber — event stays PENDING
+    await bus.publish(eventName, { val: true });
+    // Wait for initial publish + retryIfPending timeout
+    await sleep(400);
+
+    const db = new DatabaseSync(dbPath);
+    const row = db
+      .prepare("SELECT retries FROM Outbox WHERE eventName = ?")
+      .get(eventName) as Record<string, number>;
+    db.close();
+    // retryIfPending should have fired and incremented retries
+    assert.ok(row.retries >= 1);
+
+    await bus.tryClose();
+  });
+
+  it("recall on empty outbox does not throw", async () => {
+    const pubsub = await createRedisClient();
+    const bus = createPersistentBus({
+      publisherName: randomUUID(),
+      pubsub,
+      sqlitePath: tmpDbPath(),
+    });
+
+    await assert.doesNotReject(() => bus.recallOutgoingOutboxes());
+    await assert.doesNotReject(() => bus.recallDeadOutboxes());
+
+    await bus.tryClose();
+  });
+
+  it("retryIfPending marks DEAD when retries exceed maxRetries", async () => {
+    const pubsub = await createRedisClient();
+    const dbPath = tmpDbPath();
+    const bus = createPersistentBus({
+      publisherName: randomUUID(),
+      pubsub,
+      sqlitePath: dbPath,
+      // Long delay so we can bump retries before the callback fires
+      pendingDelayMs: 2000,
+    });
+    const eventName = randomEventName();
+
+    await bus.publish(eventName, { die: true });
+
+    // Bump retries above maxRetries before retryIfPending fires
+    const db = new DatabaseSync(dbPath);
+    db.exec(`UPDATE Outbox SET retries = 11 WHERE eventName = '${eventName}'`);
+    db.close();
+
+    // Wait for retryIfPending to fire + process
+    await sleep(2500);
+
+    const db2 = new DatabaseSync(dbPath);
+    const row = db2
+      .prepare("SELECT status, error FROM Outbox WHERE eventName = ?")
+      .get(eventName) as Record<string, string>;
+    db2.close();
+    assert.equal(row.status, "DEAD");
+    assert.equal(row.error, "retry:dead");
+
+    await bus.tryClose();
+  });
 });
 
 describe("tryClose", () => {
-  it("closes both Redis connections", async () => {
-    const bus = await createPersistentBus({
+  it("closes pubsub connections", async () => {
+    const pubsub = await createRedisClient();
+    const bus = createPersistentBus({
       publisherName: randomUUID(),
-      redisUrl: REDIS_URL,
+      pubsub,
       sqlitePath: tmpDbPath(),
     });
     await bus.tryClose();
@@ -78,9 +142,10 @@ describe("tryClose", () => {
   });
 
   it("is idempotent — calling twice does not throw", async () => {
-    const bus = await createPersistentBus({
+    const pubsub = await createRedisClient();
+    const bus = createPersistentBus({
       publisherName: randomUUID(),
-      redisUrl: REDIS_URL,
+      pubsub,
       sqlitePath: tmpDbPath(),
     });
     await bus.tryClose();

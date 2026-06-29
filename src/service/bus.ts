@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { EventEnvelope } from "../broker/events.ts";
-import { createPubsub } from "../broker/pubsub.ts";
+import type { EventEnvelope, PubSub } from "../broker/events.ts";
 import { createSqliteDb } from "../db.ts";
 import type { OutboxRow, RetriesResult } from "../db.types.ts";
 import { getSql } from "../sql/statements.ts";
@@ -8,7 +7,7 @@ import { calculateRetryDelay, errorToString, sleep } from "../utils/utility.ts";
 
 export interface PersistentBusOptions {
   publisherName: string;
-  redisUrl: string;
+  pubsub: PubSub;
   sqlitePath: string;
   /** Max retry attempts before marking an event DEAD (default: 10). */
   maxRetries?: number;
@@ -18,12 +17,12 @@ export interface PersistentBusOptions {
   recallIntervalMs?: number;
 }
 
-export async function createPersistentBus<
+export function createPersistentBus<
   PublisherEvents extends Record<string, unknown>,
   SubscriberEvents extends Record<string, unknown>,
 >(options: PersistentBusOptions) {
   const {
-    redisUrl,
+    pubsub,
     sqlitePath,
     publisherName,
     maxRetries = 10,
@@ -32,7 +31,6 @@ export async function createPersistentBus<
   } = options;
 
   const db = createSqliteDb(sqlitePath);
-  const pubsub = await createPubsub(redisUrl);
 
   const nowISO = () => new Date().toISOString();
 
@@ -209,8 +207,13 @@ export async function createPersistentBus<
         } else {
           incrementRetryOutbox(eventId);
 
-          const retryDelay = calculateRetryDelay(outboxEvent.retries);
-          setTimeout(() => pubsub.publish(event, data), retryDelay).unref();
+          const retryDelay = calculateRetryDelay(outboxEvent.retries, {
+            maxRetries,
+          });
+          setTimeout(
+            () => pubsub.publish(event, data).catch(() => {}),
+            retryDelay,
+          ).unref();
         }
       }
     });

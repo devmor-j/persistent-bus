@@ -4,18 +4,22 @@ import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 import { createPersistentBus } from "../dist/main.mjs";
 import { sleep } from "../src/utils/utility.ts";
-import { DEAD_RETRY, randomEventName, useTmpDir } from "./utils.ts";
-
-const { REDIS_URL } = process.env;
+import {
+  createRedisClient,
+  DEAD_RETRY,
+  randomEventName,
+  useTmpDir,
+} from "./utils.ts";
 
 const { tmpDbPath } = useTmpDir();
 
 describe("subscriber failure and dead lettering", () => {
   it("marks DEAD when subscriber throws with retries above threshold", async () => {
+    const pubsub = await createRedisClient();
     const dbPath = tmpDbPath();
-    const bus = await createPersistentBus({
+    const bus = createPersistentBus({
       publisherName: randomUUID(),
-      redisUrl: REDIS_URL,
+      pubsub,
       sqlitePath: dbPath,
     });
     const eventName = randomEventName();
@@ -55,10 +59,11 @@ describe("subscriber failure and dead lettering", () => {
 
 describe("retry decrement on publish failure", () => {
   it("decrements retry when pubsub.publish throws in recall", async () => {
+    const pubsub = await createRedisClient();
     const dbPath = tmpDbPath();
-    const bus = await createPersistentBus({
+    const bus = createPersistentBus({
       publisherName: "decrement-test",
-      redisUrl: REDIS_URL,
+      pubsub,
       sqlitePath: dbPath,
     });
     const eventName = randomEventName();
@@ -80,5 +85,80 @@ describe("retry decrement on publish failure", () => {
     db2.close();
     // recall: increment to 2 → publish fails → decrement to 1
     assert.equal(row.retries, 1);
+  });
+});
+
+describe("subscriber retry scheduling", () => {
+  it("retries subscriber handler on failure then succeeds on retry", async () => {
+    const pubsub = await createRedisClient();
+    const dbPath = tmpDbPath();
+    const bus = createPersistentBus({
+      publisherName: "retry-sched",
+      pubsub,
+      sqlitePath: dbPath,
+    });
+    const eventName = randomEventName();
+    let callCount = 0;
+
+    bus.subscribe(eventName, async () => {
+      callCount++;
+      if (callCount < 2) throw new Error("first attempt fails");
+    });
+
+    await new Promise((r) => setTimeout(r, 200));
+    await bus.publish(eventName, { retry: true });
+
+    // Wait for initial processing + retry scheduling + retry fire
+    // With maxRetries=10, retry delay is ~59ms + jitter ≈ 60-75ms
+    await sleep(1000);
+
+    const db = new DatabaseSync(dbPath);
+    const row = db
+      .prepare("SELECT status, retries FROM Outbox WHERE eventName = ?")
+      .get(eventName) as Record<string, unknown>;
+    db.close();
+    assert.equal(row.status, "COMPLETED");
+    // Should have retried once (initial fail + retry)
+    assert.equal(row.retries, 1);
+    assert.equal(callCount, 2);
+
+    await bus.tryClose();
+  });
+});
+
+describe("recallDeadOutboxes publish failure", () => {
+  it("handles publish failure gracefully and keeps event DEAD", async () => {
+    const pubsub = await createRedisClient();
+    const dbPath = tmpDbPath();
+    const bus = createPersistentBus({
+      publisherName: "dead-fail",
+      pubsub,
+      sqlitePath: dbPath,
+    });
+    const eventName = randomEventName();
+
+    // Create a DEAD event
+    await bus.publish(eventName, { die: true });
+    await new Promise((r) => setTimeout(r, 200));
+
+    const db = new DatabaseSync(dbPath);
+    db.exec(
+      `UPDATE Outbox SET status = 'DEAD', retries = 11 WHERE eventName = '${eventName}'`,
+    );
+    db.close();
+
+    // Close pubsub so publish fails
+    await bus.tryClose();
+
+    // recallDeadOutboxes should not throw when publish fails
+    await bus.recallDeadOutboxes();
+
+    // Verify event is still DEAD
+    const db2 = new DatabaseSync(dbPath);
+    const row = db2
+      .prepare("SELECT status FROM Outbox WHERE eventName = ?")
+      .get(eventName) as Record<string, string>;
+    db2.close();
+    assert.equal(row.status, "DEAD");
   });
 });
