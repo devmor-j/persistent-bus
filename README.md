@@ -18,7 +18,7 @@ Persistent Redis Pub/Sub with at-least-once delivery. A typed, resilient
 event bus for Node.js that stores events in SQLite before publishing to Redis,
 guaranteeing no messages are lost during broker restarts or crashes.
 
-- 📦 Zero dependencies (uses native `node:sqlite`)
+- 📦 Zero runtime dependencies (uses native `node:sqlite`)
 - 🔁 At-least-once delivery with automatic retries and dead lettering
 - 🧪 Fully typed with high test coverage
 - 📄 Dual ESM / CJS with bundled type declarations
@@ -28,7 +28,7 @@ guaranteeing no messages are lost during broker restarts or crashes.
 ## ✨ Features
 
 - **At-Least-Once Delivery** — Events survive on disk before reaching Redis.
-  SQLite persistence means a broker restart never drops a message.
+  A broker restart never drops a message.
 - **Automatic Retries** — Failed handlers are retried with exponential backoff
   (up to 60s). Retries continue until the handler succeeds or the retry limit
   is hit.
@@ -41,16 +41,16 @@ guaranteeing no messages are lost during broker restarts or crashes.
   envelopes together so mismatches are caught at compile time.
 - **Publisher Isolation** — Each `publisherName` operates on its own scope.
   Recall and dead-letter operations never touch another publisher's events.
-- **Graceful Shutdown** — `tryClose()` cleanly drains both Redis connections.
-  Registered on SIGINT/SIGTERM automatically — no manual cleanup needed.
+- **Graceful Shutdown** — `tryClose()` cleanly drains the pub/sub connections.
+  Idempotent — safe to call multiple times.
 
 ---
 
 ## 📋 Requirements
 
-- **Node.js** ≥ 22.5
-- **Redis** — persistent-bus relies on Redis pub/sub for delivery; publish
-  and subscribe are Redis primitives the library does not reinvent.
+- **Node.js** ≥ 22.5 (required for `node:sqlite`)
+- **Redis** — persistent-bus relies on Redis pub/sub for delivery. You provide
+  a connected pub/sub instance — the library doesn't manage the Redis connection.
 
 ---
 
@@ -60,77 +60,86 @@ guaranteeing no messages are lost during broker restarts or crashes.
 npm i persistent-bus
 ```
 
-The library ships as both ESM (`.mjs`) and CommonJS (`.cjs`) with bundled
-type declarations. It works with `import` and `require()`.
+Ships as ESM (`.mjs`) and CommonJS (`.cjs`) with bundled type declarations.
 
 ---
 
 ## 🚀 Quick start
 
-### TypeScript
-
 ```ts
+import { createClient } from "redis";
 import { createPersistentBus } from "persistent-bus";
 
-// Define your event contracts at the type level.
-type PublisherEvents = {
-  "user.created": { id: string; email: string };
-};
+// Connect your own Redis clients.
+const [publisher, subscriber] = await Promise.all([
+  createClient({ url: "redis://localhost:6379" }).connect(),
+  createClient({ url: "redis://localhost:6379" }).connect(),
+]);
 
-type SubscriberEvents = {
-  "user.created": { id: string; email: string };
-  "order.placed": { orderId: string; amount: number };
-};
-
-const bus = await createPersistentBus<PublisherEvents, SubscriberEvents>({
+const bus = createPersistentBus<
+  { "user.created": { id: string; email: string } },
+  { "user.created": { id: string; email: string } }
+>({
   publisherName: "order-service",
-  redisUrl: "redis://localhost:6379/9",
+  pubsub: {
+    publish: publisher.publish.bind(publisher),
+    subscribe: subscriber.subscribe.bind(subscriber),
+    tryClose: async () => {
+      await Promise.allSettled([publisher.close(), subscriber.close()]);
+    },
+  },
   sqlitePath: "./bus.db",
 });
 
-// Always register subscribers first, so they're ready to receive.
+// Better to register subscribers before publishing so they're ready to receive.
 bus.subscribe("user.created", async (envelope) => {
-  const { id, email } = envelope.payload;
-  console.log(`Welcome ${id} at ${email}`);
+  console.log(`Welcome ${envelope.payload.id}`);
 });
 
-// Then publish.
-const payload = { id: "abc", email: "a@b.com" };
-await bus.publish("user.created", payload);
+await bus.publish("user.created", { id: "abc", email: "a@b.com" });
+await bus.tryClose();
 ```
 
-> **Tip:** The library registers SIGINT/SIGTERM handlers automatically, so
-> connections are cleaned up on shutdown without calling `tryClose()`.
+> **Note:** Redis client methods lose `this` when destructured — use `.bind()`
+> as shown above, or wrap them in arrow functions.
 
 ### JavaScript (ESM)
 
 ```js
+import { createClient } from "redis";
 import { createPersistentBus } from "persistent-bus";
-// const { createPersistentBus } = require("persistent-bus");
 
-const bus = await createPersistentBus({
+const [publisher, subscriber] = await Promise.all([
+  createClient({ url: "redis://localhost:6379" }).connect(),
+  createClient({ url: "redis://localhost:6379" }).connect(),
+]);
+
+const bus = createPersistentBus({
   publisherName: "notification-svc",
-  redisUrl: "redis://localhost:6379/9",
+  pubsub: {
+    publish: publisher.publish.bind(publisher),
+    subscribe: subscriber.subscribe.bind(subscriber),
+    tryClose: async () => {
+      await Promise.allSettled([publisher.close(), subscriber.close()]);
+    },
+  },
   sqlitePath: "./bus.db",
 });
 
 bus.subscribe("user.created", async (envelope) => {
-  const { id, email } = envelope.payload;
-  console.log(`Notification for ${id}: ${email}`);
+  console.log(`Notification for ${envelope.payload.id}`);
 });
 
-const payload = { id: "xyz", email: "hello@example.com" };
-await bus.publish("user.created", payload);
+await bus.publish("user.created", { id: "xyz", email: "hello@example.com" });
+await bus.tryClose();
 ```
 
 ### Handling failures
 
 ```ts
-import { createPersistentBus } from "persistent-bus";
-
-const bus = await createPersistentBus({
+const bus = createPersistentBus({
   publisherName: "order-service",
-  redisUrl: "redis://localhost:6379/9",
+  pubsub: { publish, subscribe, tryClose },
   sqlitePath: "./bus.db",
 });
 
@@ -143,11 +152,11 @@ bus.subscribe("order.placed", async (envelope) => {
 // Retry all ongoing (not COMPLETED/DEAD) events for this publisher.
 await bus.recallOutgoingOutboxes();
 
-// Re-publish all DEAD events (sorted by updatedAt, 200ms apart).
+// Re-publish all DEAD events.
 await bus.recallDeadOutboxes();
 
 // Delete DEAD events older than 7 days (default). Pass 0 to delete all.
-await bus.perishDeadOutboxes();
+bus.perishDeadOutboxes();
 ```
 
 ---
@@ -162,7 +171,7 @@ published and subscribed events differently.
 | Option             | Type     | Default  | Description                                       |
 | ------------------ | -------- | -------- | ------------------------------------------------- |
 | `publisherName`    | `string` | —        | Logical name scoping this publisher's events      |
-| `redisUrl`         | `string` | —        | Redis connection URL                              |
+| `pubsub`           | `PubSub` | —        | Object with `publish?`, `subscribe?`, `tryClose?` |
 | `sqlitePath`       | `string` | —        | Path to the SQLite database file                  |
 | `maxRetries`       | `number` | `10`     | Max retry attempts before marking an event `DEAD` |
 | `pendingDelayMs`   | `number` | `10_000` | Delay in ms before first pending-retry check      |
@@ -174,9 +183,9 @@ Returns a bus instance with the following methods:
 
 Stores the event in SQLite and publishes it to Redis immediately. A one-shot
 background timer fires after `pendingDelayMs` (default 10s) and re-publishes if
-the event is still `PENDING` (nobody consumed it yet). Subsequent retries use
-exponential backoff via `retryIfPending`. If Redis is down, the event stays on
-disk and can be published later via `recallOutgoingOutboxes()`.
+the event is still `PENDING`. Subsequent retries use exponential backoff.
+If Redis is down, the event stays on disk and can be published later via
+`recallOutgoingOutboxes()`.
 
 ### `bus.subscribe(eventName, handler)`
 
@@ -192,38 +201,34 @@ Registers a handler for an event. The handler receives an `EventEnvelope`:
 }
 ```
 
-The handler can be sync or async and does not need to return a value.
-No thrown error means the event is marked `COMPLETED`.
-
-If the handler throws (or returns a rejected promise), the event is **not**
-marked `COMPLETED`. Instead, it is retried with exponential backoff up to
+The handler can be sync or async. Completion marks the event `COMPLETED`.
+If the handler throws, the event is retried with exponential backoff up to
 10 times, then marked `DEAD`.
 
-> **Note:** Timers, `setTimeout`, or other async shenanigans inside your
-> handler are outside the library's control. If a timer callback fails,
-> the library cannot detect it and the event may never be marked `COMPLETED`.
+> **Note:** Timers or other async shenanigans inside your handler are outside
+> the library's control. If a timer callback fails, the library cannot detect it.
 
 ### `bus.recallOutgoingOutboxes()`
 
-Iterates over all ongoing (not `COMPLETED` or `DEAD`) events for this publisher
-and re-publishes them to Redis. Skips events that already hit the retry limit.
-Useful to call on startup or on a cron schedule.
+Iterates all ongoing (not `COMPLETED` or `DEAD`) events for this publisher
+and re-publishes them to Redis. Skips events at the retry limit.
+Useful on startup or on a cron schedule.
 
 ### `bus.recallDeadOutboxes()`
 
-Finds all events with `status = 'DEAD'` for this publisher and re-publishes
-them to Redis (sorted by `updatedAt`, 200ms apart). Useful to retry after
-fixing the cause of failure.
+Re-publishes all `DEAD` events for this publisher (sorted by `updatedAt`).
+Does not change their status or retry count. Useful to retry after fixing
+the cause of failure.
 
 ### `bus.perishDeadOutboxes(maxAgeDays?)`
 
-Deletes DEAD events older than `maxAgeDays` from SQLite. Defaults to 7 days.
-Pass `0` to delete all DEAD events immediately regardless of age.
+Deletes `DEAD` events older than `maxAgeDays` from SQLite. Defaults to 7 days.
+Pass `0` to delete all `DEAD` events immediately.
 
 ### `bus.tryClose()`
 
-Closes both Redis connections (publisher and subscriber). Idempotent — safe
-to call multiple times. Registered on SIGINT/SIGTERM automatically.
+Closes the underlying pub/sub connections. Idempotent — safe to call multiple
+times. Call this during your application's shutdown sequence.
 
 ---
 
@@ -266,7 +271,7 @@ via a lightweight SQLite outbox. No stream configs, no extra daemons.
 | **Recall API**        | ✅ Re-publish all uncompleted or dead events | ❌ Manual replay             | ❌ Manual               | ❌ Offset reset   |
 | **Complex routing**   | ❌ Simple pub/sub                            | ❌                           | ✅ Topic/fanout/headers | ❌ Topic-only     |
 | **Ordering**          | ❌                                           | ✅ Per stream                | ✅ Per queue            | ✅ Per partition  |
-| **Throughput**        | Moderate                                     | ~200K msg/s                  | ~30K msg/s              | Millions/sec      |
+| **Throughput**        | ~30k msg/s                                   | ~200K msg/s                  | ~30K msg/s              | Millions/sec      |
 
 ### When to pick persistent-bus
 

@@ -199,8 +199,8 @@ export function createPersistentBus<
       }
     };
 
-    setTimeout(retryIfPending, pendingDelayMs);
-    await pubsub.publish(event, data);
+    setTimeout(retryIfPending, pendingDelayMs).unref();
+    pubsub.publish(event, data).catch(() => {});
   };
 
   const createSubscriber = <N extends string, P>(

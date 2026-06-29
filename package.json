@@ -3,7 +3,7 @@
   "version": "0.1.1",
   "scripts": {
     "build": "tsdown",
-    "dev": "npm run build; clear; node ./sample.ts",
+    "dev": "npm run build; clear; node ./test/sample.ts",
     "test": "bash scripts/test.sh",
     "test:coverage": "npx lcov-badge2 coverage/lcov.info -o coverage.svg",
     "prettier": "npx prettier -wu './(src|test)/**/*.{js,cjs,mjs,ts,cts,mts,json,yml,md}'"

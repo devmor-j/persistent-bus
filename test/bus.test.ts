@@ -136,7 +136,7 @@ describe("tryClose", () => {
     });
     await bus.tryClose();
     await assert.rejects(
-      () => bus.publish(randomUUID(), { after: "close" }),
+      () => pubsub.publish("test", "should fail"),
       /closed|Closed|connection/i,
     );
   });

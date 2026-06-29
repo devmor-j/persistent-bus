@@ -2,8 +2,8 @@ import "@dotenvx/dotenvx/config";
 import {
   createPersistentBus,
   type PersistentBusOptions,
-} from "./dist/main.mjs";
-import { createRedisPubSub } from "./test/utils.ts";
+} from "../dist/main.mjs";
+import { createRedisPubSub } from "./utils.ts";
 
 const { SQLITE_PATH } = process.env;
 
